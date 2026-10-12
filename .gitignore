@@ -17,6 +17,7 @@ venv/
 runs/
 logs/
 *.log
+results/*/vision_images/
 
 # Models and large data
 models/

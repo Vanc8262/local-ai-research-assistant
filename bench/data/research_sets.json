@@ -1,0 +1,94 @@
+[
+  {
+    "id": "bus-lanes",
+    "question": "What were the measured effects of the Harlow Valley bus lane pilot, and what concerns were raised?",
+    "sources": [
+      {"title": "Harlow Valley Transit Authority, pilot evaluation",
+       "text": "The pilot converted 6.4 km of Route 12 to bus-only lanes in March 2024. Average weekday bus travel time on the corridor fell from 31 minutes to 24 minutes. Car travel times on the parallel road were unchanged within measurement error."},
+      {"title": "Route 12 rider survey",
+       "text": "A survey of 1,180 riders found that 68% rated reliability as improved. Ridership on Route 12 rose 11% in the six months after launch compared with the same months a year earlier."},
+      {"title": "Letter from the Harlow Merchants Association",
+       "text": "Nine of 40 surveyed shops on the corridor reported lower foot traffic since the lanes opened. The association asked the city to add 15-minute loading bays on each block."}
+    ],
+    "facts": [
+      {"pattern": "24\\s*min", "source": 1},
+      {"pattern": "11\\s*(%|percent)", "source": 2},
+      {"pattern": "68\\s*(%|percent)", "source": 2},
+      {"pattern": "loading bay|foot traffic", "source": 3}
+    ]
+  },
+  {
+    "id": "sodium-cells",
+    "question": "How do the Tessaly sodium-ion cells compare with the lithium iron phosphate (LFP) reference on durability, cost and performance?",
+    "sources": [
+      {"title": "Tessaly Labs cycling study",
+       "text": "The sodium-ion cells retained 91% of their capacity after 2,000 charge cycles at 25 °C. The LFP reference cells retained 93% under the same protocol."},
+      {"title": "Independent cost analysis",
+       "text": "At projected volume the sodium-ion pack is estimated at $62 per kWh, against $89 per kWh for the LFP reference. The estimate assumes current soda ash prices."},
+      {"title": "Northern fleet field trial",
+       "text": "Measured energy density was 148 Wh/kg, about 20% below the LFP reference. In the -20 °C test the sodium-ion cells delivered 84% of rated capacity."}
+    ],
+    "facts": [
+      {"pattern": "91\\s*(%|percent)", "source": 1},
+      {"pattern": "\\$\\s*62|62 (dollars|per)", "source": 2},
+      {"pattern": "148", "source": 3},
+      {"pattern": "84\\s*(%|percent)", "source": 3}
+    ]
+  },
+  {
+    "id": "hybrid-work",
+    "question": "What happened at Corvin Analytics after it moved to a hybrid schedule?",
+    "sources": [
+      {"title": "Corvin Analytics HR memo",
+       "text": "The company moved to three remote days per week in January 2025. Voluntary attrition fell from 14% to 9% year over year."},
+      {"title": "Engineering productivity review",
+       "text": "Tickets closed per engineer rose 6%. Median code review turnaround lengthened from 5 hours to 8 hours."},
+      {"title": "Employee survey",
+       "text": "Of 410 respondents, 72% preferred the hybrid schedule. Among employees with under one year of tenure, 44% reported feeling less connected to their team, compared with 21% of longer-tenured staff."}
+    ],
+    "facts": [
+      {"pattern": "\\b9\\s*(%|percent)", "source": 1},
+      {"pattern": "\\b6\\s*(%|percent)", "source": 2},
+      {"pattern": "8 hours|eight hours", "source": 2},
+      {"pattern": "72\\s*(%|percent)", "source": 3},
+      {"pattern": "44\\s*(%|percent)", "source": 3}
+    ]
+  },
+  {
+    "id": "lake-orrin",
+    "question": "Why does Lake Orrin have an algae problem, and what is being done about it?",
+    "sources": [
+      {"title": "Lake Orrin monitoring report 2023",
+       "text": "Phosphorus concentration averaged 48 µg/L in 2023, above the 30 µg/L target. Algal blooms were recorded on 37 days."},
+      {"title": "University of Pell watershed study",
+       "text": "The study attributes roughly 60% of the lake's phosphorus load to agricultural runoff from the Pell Creek sub-basin."},
+      {"title": "County council minutes",
+       "text": "The council approved $2.3 million for buffer strips along 14 km of Pell Creek. Staff expect the project to cut the phosphorus load by 25% within five years."}
+    ],
+    "facts": [
+      {"pattern": "\\b48\\b", "source": 1},
+      {"pattern": "60\\s*(%|percent)", "source": 2},
+      {"pattern": "2\\.3\\s*million", "source": 3},
+      {"pattern": "25\\s*(%|percent)", "source": 3}
+    ]
+  },
+  {
+    "id": "lattice-pruning",
+    "question": "How well does lattice pruning work on the Brel-7 model, and what caveats have been reported?",
+    "sources": [
+      {"title": "Original lattice pruning paper",
+       "text": "Lattice pruning removes 40% of the weights of the Brel-7 model with a 0.8 point accuracy loss on the Mirel benchmark."},
+      {"title": "Independent replication",
+       "text": "A replication found a 1.9 point accuracy loss when the calibration set was reduced from 5,000 to 500 examples."},
+      {"title": "Engineering blog post",
+       "text": "After pruning, inference latency on a mid-range GPU dropped from 38 ms to 27 ms per request. Memory use fell 35%."}
+    ],
+    "facts": [
+      {"pattern": "40\\s*(%|percent)", "source": 1},
+      {"pattern": "0\\.8", "source": 1},
+      {"pattern": "1\\.9", "source": 2},
+      {"pattern": "27\\s*ms|27 milliseconds", "source": 3},
+      {"pattern": "35\\s*(%|percent)", "source": 3}
+    ]
+  }
+]

@@ -1,0 +1,31 @@
+# Stage 0 benchmark settings. Run `python -m bench models` to see the exact
+# model ids your LM Studio server reports, then edit the [[models]] blocks.
+
+[server]
+base_url = "http://localhost:1234/v1"   # LM Studio's OpenAI-compatible server
+api_key = "lm-studio"                   # any text unless you set a permission key
+timeout_s = 900
+
+[defaults]
+temperature = 0.0     # raise per model if a reasoning model loops at 0
+max_tokens = 3000     # includes reasoning tokens
+seed = 42
+speed_repeats = 3
+code_attempts = 2     # 1 = single shot; 2 = one retry with the test output
+context_length = 8192 # what you loaded the model with; recorded and checked
+
+[[models]]
+id = "qwen3.5-9b"
+label = "Qwen3.5 9B"
+vision = true
+
+[[models]]
+id = "gemma-4-12b-qat"
+label = "Gemma 4 12B QAT"
+vision = true
+
+# Optional per-model settings:
+#   temperature = 0.6
+#   max_tokens = 4000
+#   system_suffix = "/no_think"            # appended to every system prompt
+#   extra_body = { reasoning_effort = "low" }  # merged into every request body

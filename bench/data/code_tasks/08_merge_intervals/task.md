@@ -1,0 +1,1 @@
+`merge_intervals` gives wrong results in three situations: when the input is not sorted, when two intervals only touch (one ends where the next starts), and when one interval lies completely inside another. Fix all three. The result must be a list of `(start, end)` tuples sorted by start, and the input list must not be modified.

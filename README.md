@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** planning complete, Stage 0 (model benchmark) not started. No code yet.
+**Status:** Stage 0 in progress. The benchmark harness is written and tested; no models have been benchmarked yet. See [bench/README.md](bench/README.md) to run it.
 
 ## Goals
 
@@ -93,3 +93,5 @@ Candidate models: Qwen3.5 9B and Gemma 4 12B QAT, with Gemma 4 E4B QAT and Minis
 | Headroom | Free RAM with the model, Docker and SearXNG all running | 1 run per model | Script |
 
 Everything runs at 8K context first; 16K and 32K are tested only on the finalist.
+
+The harness for these tests is in [`bench/`](bench/README.md).

@@ -1,0 +1,1 @@
+`median` is wrong for lists with an even number of values: it should return the mean of the two middle values. It should also raise `ValueError` for an empty list, and it must not change the order of the list passed in.
