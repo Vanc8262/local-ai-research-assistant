@@ -16,8 +16,9 @@ speed_repeats = 3
 code_attempts = 2     # 1 = single shot; 2 = one retry with the test output
 context_length = 8192 # what you loaded the model with; recorded and checked
 
-# Sampling follows each maker's recommendation for reasoning mode. Temperature 0
-# made both models loop in their reasoning until they hit max_tokens.
+# Sampling follows each maker's recommendation for reasoning mode. At temperature 0
+# both models often reasoned until they hit max_tokens (a loop is suspected; the next
+# run records reasoning_tail and loop_suspected to confirm).
 
 [[models]]
 id = "qwen3.5-9b"
