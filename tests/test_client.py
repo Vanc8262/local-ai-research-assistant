@@ -103,3 +103,21 @@ def test_models_fall_back_to_openai_list():
             return httpx.Response(200, json={"data": [{"id": "plain"}]})
         return httpx.Response(404)
     assert client_for(handler).list_models() == [{"id": "plain"}]
+
+
+def test_cut_off_reply_keeps_reasoning_tail_and_flags_a_loop():
+    from bench.client import REASONING_TAIL_CHARS, ChatResult
+    looping = ChatResult(reasoning="Let me check the edge case again. " * 200, finish_reason="length")
+    record = looping.timing()
+    assert record["loop_suspected"] is True
+    assert len(record["reasoning_tail"]) == REASONING_TAIL_CHARS
+
+    progressing = ChatResult(reasoning="".join(f"step {i}: try value {i * 7}. " for i in range(400)),
+                             finish_reason="length")
+    assert progressing.timing()["loop_suspected"] is False
+
+    answered = ChatResult(content="done", reasoning="thinking " * 50, finish_reason="stop")
+    assert "reasoning_tail" not in answered.timing()
+
+    empty = ChatResult(reasoning="The answer is 20 percent.", finish_reason="stop")
+    assert empty.timing()["reasoning_tail"] == "The answer is 20 percent."

@@ -2,27 +2,36 @@
 # model ids your LM Studio server reports, then edit the [[models]] blocks.
 
 [server]
-base_url = "http://localhost:1234/v1"   # LM Studio's OpenAI-compatible server
+# 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and every
+# request waited about 2.3 s before falling back, which inflated time to first token.
+base_url = "http://127.0.0.1:1234/v1"   # LM Studio's OpenAI-compatible server
 api_key = "lm-studio"                   # any text unless you set a permission key
 timeout_s = 900
 
 [defaults]
-temperature = 0.0     # raise per model if a reasoning model loops at 0
-max_tokens = 6000     # includes reasoning tokens; 3000 cut off Qwen3.5 9B and Gemma 4 12B mid-reasoning in the first smoke test
+temperature = 0.0     # only for models without their own setting below
+max_tokens = 6000     # includes reasoning tokens; 3000 cut off both models mid-reasoning. At 8K context, ~7000 is the ceiling.
 seed = 42
 speed_repeats = 3
 code_attempts = 2     # 1 = single shot; 2 = one retry with the test output
 context_length = 8192 # what you loaded the model with; recorded and checked
 
+# Sampling follows each maker's recommendation for reasoning mode. Temperature 0
+# made both models loop in their reasoning until they hit max_tokens.
+
 [[models]]
 id = "qwen3.5-9b"
 label = "Qwen3.5 9B"
 vision = true
+temperature = 0.6     # Qwen's thinking-mode preset for precise coding
+extra_body = { top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0 }
 
 [[models]]
 id = "gemma-4-12b-qat"
 label = "Gemma 4 12B QAT"
 vision = true
+temperature = 1.0     # Google's default for Gemma 4
+extra_body = { top_p = 0.95, top_k = 64 }
 
 # Optional per-model settings:
 #   temperature = 0.6

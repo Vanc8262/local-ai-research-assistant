@@ -34,8 +34,9 @@ def _note(suite: str, record: dict) -> str:
     return ""
 
 
-def _with_truncation(note: str, metrics: dict) -> str:
-    cut = metrics.get("truncated_replies")
+def _with_truncation(note: str, metrics: dict, suite: str = "") -> str:
+    # The speed suite caps replies on purpose to time a fixed amount of generation.
+    cut = 0 if suite == "speed" else metrics.get("truncated_replies")
     return f"{note}; {cut} replies cut off by max_tokens".lstrip("; ") if cut else note
 
 
@@ -62,7 +63,7 @@ def build_rows(results_dir: Path) -> list[dict]:
                 "peak_vram_mb": _blank(metrics.get("peak_vram_used_mb", metrics.get("vram_used_mb"))),
                 "min_ram_available_mb": _blank(metrics.get("min_ram_available_mb",
                                                            metrics.get("ram_available_mb"))),
-                "note": _with_truncation(_note(suite, record), metrics),
+                "note": _with_truncation(_note(suite, record), metrics, suite),
             })
     return rows
 

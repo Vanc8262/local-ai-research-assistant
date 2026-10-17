@@ -14,6 +14,8 @@ from dataclasses import asdict, dataclass, field
 import httpx
 
 THINK_RE = re.compile(r"<think>(.*?)</think>", re.DOTALL)
+REASONING_TAIL_CHARS = 1500   # reasoning kept in the results for cut-off or empty replies
+REPEAT_PROBE_CHARS = 200      # a repeat of this much text at the end counts as a loop
 
 
 @dataclass
@@ -52,8 +54,19 @@ class ChatResult:
             return None
         return self.prompt_tokens / self.ttft_s
 
+    @property
+    def no_answer(self) -> bool:
+        """True when the model produced neither answer text nor a tool call."""
+        return not self.content.strip() and not self.tool_calls
+
+    @property
+    def loop_suspected(self) -> bool:
+        """True when the end of the reasoning repeats a passage seen earlier in it."""
+        probe = self.reasoning[-REPEAT_PROBE_CHARS:].strip()
+        return len(probe) >= REPEAT_PROBE_CHARS // 2 and probe in self.reasoning[:-REPEAT_PROBE_CHARS]
+
     def timing(self) -> dict:
-        return {
+        record = {
             "ttft_s": _round(self.ttft_s),
             "ttfa_s": _round(self.ttfa_s),
             "total_s": _round(self.total_s),
@@ -65,6 +78,12 @@ class ChatResult:
             "reasoning_chars": len(self.reasoning),
             "finish_reason": self.finish_reason,
         }
+        # When a reply is cut off or empty, keep the end of the reasoning so you can
+        # see whether the model was looping or still making progress.
+        if self.reasoning and (self.finish_reason == "length" or self.no_answer):
+            record["loop_suspected"] = self.loop_suspected
+            record["reasoning_tail"] = self.reasoning[-REASONING_TAIL_CHARS:]
+        return record
 
     def to_record(self) -> dict:
         record = self.timing()
