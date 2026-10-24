@@ -23,3 +23,21 @@ run_id,model,tag,context,suite,score_pct,passed,total,manual_avg_1_to_5,median_t
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,vision,100.0,5,5,4.8,0.578,40.793,9287,3059,
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,speed,,3,3,,0.582,39.761,9287,2054,generation 39.761 tok/s; long input first token 2.912 s
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,headroom,,0,1,,0.378,46.226,9287,3599,Docker not reachable; start Docker and SearXNG for a realistic reading
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,tools,80.0,24,30,,0.235,42.761,8500,532,"valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 5/8, recovery 1/4"
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,code,90.0,9,10,,0.686,42.443,8472,458,7 passed on the first try (2 attempts allowed); 1 replies cut off by max_tokens
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,research,98.0,5,5,,0.383,42.212,8506,1029,"fact recall 0.96, citation accuracy 1.0 (automatic part)"
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,vision,100.0,5,5,,0.705,42.615,8473,1016,
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,speed,,3,3,,0.283,42.412,8472,399,generation 42.412 tok/s; long input first token 1.569 s
+20261024-174523_qwen3.5-9b-q6,Qwen3.5 9B Q6_K,,8192,headroom,,0,1,,0.187,42.865,8473,1062,only 1191 MB of RAM available; Docker not reachable; start Docker and SearXNG for a realistic reading
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,tools,96.7,29,30,,0.096,54.102,6823,1404,"valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 3/4"
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,code,70.0,7,10,,0.946,50.839,6824,521,6 passed on the first try (2 attempts allowed); 7 replies cut off by max_tokens
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,research,97.5,5,5,,0.56,53.391,6791,1204,"fact recall 0.95, citation accuracy 1.0 (automatic part)"
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,vision,,0,0,,,,,,skipped: model is not marked vision = true in bench.toml
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,speed,,3,3,,0.154,55.159,6791,1285,generation 55.159 tok/s; long input first token 1.643 s
+20261024-181403_granite-4.2-8b,Granite 4.2 8B,,8192,headroom,,0,1,,0.174,57.333,6791,1823,only 1808 MB of RAM available; Docker not reachable; start Docker and SearXNG for a realistic reading
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,tools,96.7,29,30,,0.135,72.87,4827,4984,"valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 3/4"
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,code,100.0,10,10,,0.315,72.05,4787,4159,9 passed on the first try (2 attempts allowed); 1 replies cut off by max_tokens
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,research,97.5,5,5,,0.229,73.611,4787,3783,"fact recall 1.0, citation accuracy 0.95 (automatic part)"
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,vision,100.0,5,5,,0.266,81.078,4787,3672,
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,speed,,3,3,,0.168,74.295,4787,3884,generation 74.295 tok/s; long input first token 1.066 s
+20261024-185125_gemma-4-e4b-qat,Gemma 4 E4B QAT,,8192,headroom,,0,1,,0.117,87.281,4787,3684,Docker not reachable; start Docker and SearXNG for a realistic reading

@@ -28,8 +28,13 @@ Set-Location (Split-Path -Parent $PSScriptRoot)
 
 # bench.toml id -> LM Studio model key (as shown by `lms ls`)
 $ModelKeys = @{
-    "qwen3.5-9b"      = "qwen/qwen3.5-9b"
+    "qwen3.5-9b"      = "qwen/qwen3.5-9b"          # loads its selected variant, Q4_K_M
     "gemma-4-12b-qat" = "google/gemma-4-12b-qat"
+    # lms load does not accept "@variant" keys, so the Q6_K file was hard-linked in as
+    # its own model: lms import <Qwen3.5-9B-Q6_K.gguf and mmproj> --hard-link --user-repo local/Qwen3.5-9B-Q6_K-GGUF
+    "qwen3.5-9b-q6"   = "local/qwen3.5-9b"
+    "granite-4.2-8b"  = "granite-4.2-8b"
+    "gemma-4-e4b-qat" = "gemma-4-e4b-it-qat"
 }
 
 function Step($text) { Write-Host "`n=== $text ===" -ForegroundColor Cyan }

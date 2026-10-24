@@ -1,0 +1,240 @@
+{
+  "tools": {
+    "name": "tools",
+    "score": 0.9666666666666667,
+    "passed": 29,
+    "total": 30,
+    "metrics": {
+      "format_valid_rate": 1.0,
+      "pass_by_category": {
+        "single": "10/10",
+        "no_tool": "4/4",
+        "arguments": "4/4",
+        "chain": "8/8",
+        "recovery": "3/4"
+      },
+      "calls": 72,
+      "call_errors": 0,
+      "median_ttft_s": 0.135,
+      "median_ttfa_s": 2.035,
+      "median_gen_tps": 72.87,
+      "median_total_s": 2.422,
+      "completion_tokens": 13739,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 4827,
+      "peak_ram_used_mb": 11329,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 4984
+    },
+    "skipped": null
+  },
+  "code": {
+    "name": "code",
+    "score": 1.0,
+    "passed": 10,
+    "total": 10,
+    "metrics": {
+      "passed_first_try": 9,
+      "attempts_allowed": 2,
+      "format_valid_rate": 0.9,
+      "calls": 11,
+      "call_errors": 0,
+      "median_ttft_s": 0.315,
+      "median_ttfa_s": 16.733,
+      "median_gen_tps": 72.05,
+      "median_total_s": 19.822,
+      "completion_tokens": 24535,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 1,
+      "peak_vram_used_mb": 4787,
+      "peak_ram_used_mb": 12154,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 4159
+    },
+    "skipped": null
+  },
+  "speed": {
+    "name": "speed",
+    "score": null,
+    "passed": 3,
+    "total": 3,
+    "metrics": {
+      "repeats": 3,
+      "generate_tps": 74.295,
+      "long_input_ttft_s": 1.066,
+      "long_input_prompt_tps": 1797.019,
+      "reasoning_comparison": [
+        {
+          "reasoning": "on",
+          "wall_s": 2.553,
+          "stats": {
+            "input_tokens": 51,
+            "total_output_tokens": 176,
+            "reasoning_output_tokens": 166,
+            "tokens_per_second": 72.73355992954404,
+            "time_to_first_token_seconds": 0.074085
+          },
+          "answer": "17:05",
+          "correct": true
+        },
+        {
+          "reasoning": "off",
+          "wall_s": 0.142,
+          "stats": {
+            "input_tokens": 44,
+            "total_output_tokens": 6,
+            "reasoning_output_tokens": 0,
+            "tokens_per_second": 66.1769571835087,
+            "time_to_first_token_seconds": 0.04081
+          },
+          "answer": "17:05",
+          "correct": true
+        }
+      ],
+      "calls": 9,
+      "call_errors": 0,
+      "median_ttft_s": 0.168,
+      "median_ttfa_s": 2.049,
+      "median_gen_tps": 74.295,
+      "median_total_s": 5.918,
+      "completion_tokens": 4172,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 4787,
+      "peak_ram_used_mb": 12429,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 3884
+    },
+    "skipped": null
+  },
+  "research": {
+    "name": "research",
+    "score": 0.975,
+    "passed": 5,
+    "total": 5,
+    "metrics": {
+      "mean_fact_recall": 1.0,
+      "mean_citation_accuracy": 0.95,
+      "score_is": "automatic part only; add manual scores",
+      "calls": 5,
+      "call_errors": 0,
+      "median_ttft_s": 0.229,
+      "median_ttfa_s": 6.507,
+      "median_gen_tps": 73.611,
+      "median_total_s": 8.393,
+      "completion_tokens": 3202,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 4787,
+      "peak_ram_used_mb": 12531,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 3783
+    },
+    "skipped": null
+  },
+  "vision": {
+    "name": "vision",
+    "score": 1.0,
+    "passed": 5,
+    "total": 5,
+    "metrics": {
+      "calls": 5,
+      "call_errors": 0,
+      "median_ttft_s": 0.266,
+      "median_ttfa_s": 0.267,
+      "median_gen_tps": 81.078,
+      "median_total_s": 0.302,
+      "completion_tokens": 273,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 4787,
+      "peak_ram_used_mb": 12642,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 3672
+    },
+    "skipped": null
+  },
+  "headroom": {
+    "name": "headroom",
+    "score": null,
+    "passed": 0,
+    "total": 1,
+    "metrics": {
+      "ram_total_mb": 16314,
+      "ram_used_mb": 12643,
+      "ram_available_mb": 3670,
+      "swap_used_mb": 523,
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288,
+      "vram_used_mb": 4787,
+      "vram_free_mb": 7329,
+      "gpu_util_pct": 91,
+      "gpu_temp_c": 55,
+      "docker_containers": null,
+      "warnings": [
+        "Docker not reachable; start Docker and SearXNG for a realistic reading"
+      ],
+      "top_processes": [
+        {
+          "name": "llama-server.exe",
+          "rss_mb": 8308
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 566
+        },
+        {
+          "name": "LM Studio.exe",
+          "rss_mb": 260
+        },
+        {
+          "name": "MsMpEng.exe",
+          "rss_mb": 248
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 237
+        },
+        {
+          "name": "LM Studio.exe",
+          "rss_mb": 164
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 160
+        },
+        {
+          "name": "MemCompression",
+          "rss_mb": 159
+        }
+      ],
+      "calls": 1,
+      "call_errors": 0,
+      "median_ttft_s": 0.117,
+      "median_ttfa_s": 0.4,
+      "median_gen_tps": 87.281,
+      "median_total_s": 0.414,
+      "completion_tokens": 26,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 4787,
+      "peak_ram_used_mb": 12630,
+      "peak_swap_used_mb": 523,
+      "peak_gpu_temp_c": 56,
+      "min_ram_available_mb": 3684
+    },
+    "skipped": null
+  }
+}
