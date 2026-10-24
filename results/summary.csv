@@ -13,13 +13,13 @@ run_id,model,tag,context,suite,score_pct,passed,total,manual_avg_1_to_5,median_t
 20261016-211030_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,headroom,,0,1,,2.506,44.486,9306,4346,Docker not reachable; start Docker and SearXNG for a realistic reading
 20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,tools,100.0,30,30,,0.221,54.183,7160,1167,"valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 4/4"
 20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,code,90.0,9,10,,0.564,53.735,7160,377,9 passed on the first try (2 attempts allowed)
-20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,research,100.0,5,5,,0.451,53.327,7118,302,"fact recall 1.0, citation accuracy 1.0 (automatic part)"
-20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,vision,100.0,5,5,,0.681,53.996,7118,650,
+20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,research,100.0,5,5,4.8,0.451,53.327,7118,302,"fact recall 1.0, citation accuracy 1.0 (automatic part)"
+20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,vision,100.0,5,5,4.8,0.681,53.996,7118,650,
 20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,speed,,3,3,,0.305,53.678,7118,270,generation 53.678 tok/s; long input first token 1.56 s
 20261024-102529_qwen3.5-9b,Qwen3.5 9B,,8192,headroom,,0,1,,0.187,54.174,7118,667,only 722 MB of RAM available; Docker not reachable; start Docker and SearXNG for a realistic reading
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,tools,90.0,27,30,,0.784,41.014,9295,428,"valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 7/8, recovery 2/4"
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,code,80.0,8,10,,1.092,36.486,9289,2748,7 passed on the first try (2 attempts allowed); 5 replies cut off by max_tokens
-20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,research,100.0,5,5,,0.731,38.791,9287,2010,"fact recall 1.0, citation accuracy 1.0 (automatic part)"
-20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,vision,100.0,5,5,,0.578,40.793,9287,3059,
+20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,research,100.0,5,5,5.0,0.731,38.791,9287,2010,"fact recall 1.0, citation accuracy 1.0 (automatic part)"
+20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,vision,100.0,5,5,4.8,0.578,40.793,9287,3059,
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,speed,,3,3,,0.582,39.761,9287,2054,generation 39.761 tok/s; long input first token 2.912 s
 20261024-105201_gemma-4-12b-qat,Gemma 4 12B QAT,,8192,headroom,,0,1,,0.378,46.226,9287,3599,Docker not reachable; start Docker and SearXNG for a realistic reading
