@@ -139,6 +139,7 @@ def test_suffix_without_system_message_and_truncation_count(tmp_path):
     assert _with_truncation("note", metrics) == "note; 1 replies cut off by max_tokens"
     assert _with_truncation("", metrics) == "1 replies cut off by max_tokens"
     assert _with_truncation("note", {"truncated_replies": 0}) == "note"
+    assert _with_truncation("note", metrics, "speed") == "note"
 
 
 def test_context_option_is_recorded_when_the_server_does_not_report_it(project, monkeypatch):
@@ -152,3 +153,14 @@ def test_context_option_is_recorded_when_the_server_does_not_report_it(project, 
     assert cli.main(["run", "--model", "fake-model", "--suites", "headroom", "--context", "16384"]) == 0
     run_dir = next(p for p in (project / "results").iterdir() if p.is_dir())
     assert json.loads((run_dir / "meta.json").read_text(encoding="utf-8"))["context_length"] == 16384
+
+
+def test_repo_bench_toml_loads_with_per_model_sampling():
+    from pathlib import Path
+
+    from bench.config import load_config
+    cfg = load_config(Path(__file__).resolve().parent.parent / "bench.toml")
+    assert cfg.base_url.startswith("http://127.0.0.1")
+    qwen, gemma = cfg.model("qwen3.5-9b"), cfg.model("gemma-4-12b-qat")
+    assert qwen.temperature == 0.6 and qwen.extra_body["top_k"] == 20
+    assert gemma.temperature == 1.0 and gemma.extra_body["top_k"] == 64

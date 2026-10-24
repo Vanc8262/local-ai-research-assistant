@@ -27,10 +27,26 @@ def gpu_snapshot() -> dict | None:
         return None
 
 
+def swap_used_mb() -> int | None:
+    """Swap (page file) in use, or None when the OS will not say.
+
+    On Windows psutil reads this from a performance counter, and that call fails with
+    "PdhAddEnglishCounterW failed" when performance counters are disabled or corrupt.
+    """
+    try:
+        return psutil.swap_memory().used // MB
+    except (RuntimeError, OSError):
+        return None
+
+
 def ram_snapshot() -> dict:
-    vm, swap = psutil.virtual_memory(), psutil.swap_memory()
-    return {"ram_total_mb": vm.total // MB, "ram_used_mb": (vm.total - vm.available) // MB,
-            "ram_available_mb": vm.available // MB, "swap_used_mb": swap.used // MB}
+    vm = psutil.virtual_memory()
+    data = {"ram_total_mb": vm.total // MB, "ram_used_mb": (vm.total - vm.available) // MB,
+            "ram_available_mb": vm.available // MB}
+    swap = swap_used_mb()
+    if swap is not None:
+        data["swap_used_mb"] = swap
+    return data
 
 
 def snapshot() -> dict:

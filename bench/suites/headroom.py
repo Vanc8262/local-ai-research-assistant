@@ -38,7 +38,9 @@ def run(ctx: Ctx) -> SuiteResult:
         warnings.append(f"model did not answer: {warm.error}")
     if snap["ram_available_mb"] < LOW_RAM_MB:
         warnings.append(f"only {snap['ram_available_mb']} MB of RAM available")
-    if snap["swap_used_mb"] > 2000:
+    if "swap_used_mb" not in snap:
+        print("  note: swap use not measured (Windows performance counters are unavailable)")
+    elif snap["swap_used_mb"] > 2000:
         warnings.append(f"{snap['swap_used_mb']} MB of swap in use; the system is paging")
     if "vram_free_mb" not in snap:
         warnings.append("nvidia-smi not found; VRAM not measured")

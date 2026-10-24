@@ -104,7 +104,7 @@ Each run gets a folder such as `results/20261012-0930_qwen3.5-9b/`:
 - `tools` and `code` matter most for this project. In `tools`, check the `chain` and `recovery` categories and the valid-call-format rate; those predict whether an editing loop will hold together.
 - `passed on the first try` in `code` separates models that get it right from models that need the test output to fix their work.
 - The `research` score is only the mechanical part (facts present, cited to the right source). Your manual score covers whether the summary is faithful and readable.
-- A note such as `3 replies cut off by max_tokens` means the model ran out of tokens, usually while reasoning. Raise `max_tokens` for that model in `bench.toml` and rerun.
+- A note such as `3 replies cut off by max_tokens` means the model ran out of tokens, usually while reasoning. Look at `reasoning_tail` and `loop_suspected` in that item's `timing` in the suite's `.jsonl` file: a loop calls for different sampling settings (temperature, `presence_penalty`), steady progress calls for a higher `max_tokens`. At 8K context, `max_tokens` cannot go much above 7000. The `speed` suite caps replies on purpose and is left out of this note.
 - Tokens per second on very short replies is unreliable; use the `speed` suite's `generate` figure.
 
 ## Settings
