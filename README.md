@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** Stage 0 in progress. The benchmark harness is written and tested; no models have been benchmarked yet. See [bench/README.md](bench/README.md) to run it.
+**Status:** Stage 0 in progress. Qwen3.5 9B and Gemma 4 12B QAT have a first baseline run at temperature 0 ([results/summary.md](results/summary.md)); a rerun with each maker's sampling settings comes next. See [bench/README.md](bench/README.md) to run the harness.
 
 ## Goals
 
