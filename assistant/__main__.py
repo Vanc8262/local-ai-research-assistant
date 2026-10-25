@@ -8,6 +8,7 @@
     python -m assistant show <run_id>                       print the steps of a logged run
     python -m assistant proxy [--public]                    serve the tiers as an OpenAI-compatible
                                                             endpoint for tools such as LDR
+    python -m assistant codex list|fetch [--only id ...]    the local library of papers and books
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -19,6 +20,7 @@ from pathlib import Path
 
 import httpx
 
+from .codex import CatalogError, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
@@ -122,6 +124,34 @@ def cmd_proxy(settings, args) -> int:
     return 0
 
 
+def cmd_codex(settings, args) -> int:
+    try:
+        items = load_catalog(args.catalog)
+    except CatalogError as exc:
+        print(f"catalog error: {exc}")
+        return 1
+    if args.action == "list":
+        manifest = read_manifest(settings.codex_dir)
+        for item in items:
+            state = "have" if item.id in manifest else ("html" if item.kind == "html" else "-")
+            print(f"{state:<5} {item.topic:<21} {item.id:<24} {item.title}")
+        print(f"\n{len(manifest)} of {len(items)} in {settings.codex_dir}")
+        return 0
+    log = RunLog(settings.runs_dir, task=f"codex fetch into {settings.codex_dir}")
+    try:
+        outcomes = fetch(items, settings.codex_dir, log, only=args.only)
+    except CatalogError as exc:
+        print(f"catalog error: {exc}")
+        return 1
+    for item, outcome in outcomes:
+        print(f"{outcome:<14} {item.topic}/{item.id}")
+    failed = [item.id for item, outcome in outcomes if outcome not in ("downloaded", "present", "skipped_html")]
+    print(f"\nManifest: {settings.codex_dir / 'manifest.csv'}\nRun log: {log.path}")
+    if failed:
+        print(f"Failed: {', '.join(failed)} (fix the URL in {args.catalog} and run again)")
+    return 1 if failed else 0
+
+
 def _fmt(value, pattern: str) -> str:
     return "-" if value is None else pattern.format(value)
 
@@ -147,11 +177,15 @@ def main(argv: list[str] | None = None) -> int:
     proxy.add_argument("--port", type=int, default=None, help="default: proxy_port in assistant.toml")
     proxy.add_argument("--public", action="store_true",
                        help="every request in this session is public, so cloud tiers may receive it")
+    codex = sub.add_parser("codex", help="list or download the papers and books in codex/catalog.toml")
+    codex.add_argument("action", choices=("list", "fetch"))
+    codex.add_argument("--catalog", default="codex/catalog.toml")
+    codex.add_argument("--only", nargs="+", metavar="ID", help="fetch just these catalog ids")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
-               "proxy": cmd_proxy}[args.command]
+               "proxy": cmd_proxy, "codex": cmd_codex}[args.command]
     return handler(settings, args)
 
 

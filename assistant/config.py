@@ -44,6 +44,7 @@ class Settings:
     runs_dir: Path = Path("runs")
     searxng_url: str = "http://127.0.0.1:8888"
     proxy_port: int = 8765
+    codex_dir: Path = Path("~/Desktop/local-ai-codex").expanduser()
     tiers: dict[str, Tier] = field(default_factory=dict)
 
     def tier(self, name: str) -> Tier:
@@ -62,6 +63,7 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
         runs_dir=Path(main.get("runs_dir", "runs")),
         searxng_url=main.get("searxng_url", "http://127.0.0.1:8888").rstrip("/"),
         proxy_port=int(main.get("proxy_port", 8765)),
+        codex_dir=Path(main.get("codex_dir", "~/Desktop/local-ai-codex")).expanduser(),
     )
     for name, entry in raw.get("tiers", {}).items():
         settings.tiers[name] = Tier(name=name, **entry)
