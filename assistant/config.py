@@ -43,6 +43,7 @@ class Settings:
     backup_tier: str = ""
     runs_dir: Path = Path("runs")
     searxng_url: str = "http://127.0.0.1:8888"
+    proxy_port: int = 8765
     tiers: dict[str, Tier] = field(default_factory=dict)
 
     def tier(self, name: str) -> Tier:
@@ -60,6 +61,7 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
         backup_tier=main.get("backup_tier", ""),
         runs_dir=Path(main.get("runs_dir", "runs")),
         searxng_url=main.get("searxng_url", "http://127.0.0.1:8888").rstrip("/"),
+        proxy_port=int(main.get("proxy_port", 8765)),
     )
     for name, entry in raw.get("tiers", {}).items():
         settings.tiers[name] = Tier(name=name, **entry)
