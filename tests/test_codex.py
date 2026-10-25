@@ -1,4 +1,5 @@
 import hashlib
+from pathlib import Path
 
 import httpx
 import pytest
@@ -121,3 +122,8 @@ model = "m"
     assert main(["--config", str(config), "codex", "list", "--catalog", str(write_catalog(tmp_path))]) == 0
     out = capsys.readouterr().out
     assert "react" in out and "html" in out and "0 of 3" in out
+
+
+def test_shipped_catalog_loads():
+    items = load_catalog(Path(__file__).resolve().parent.parent / "codex" / "catalog.toml")
+    assert len(items) >= 20 and all(item.licence for item in items)

@@ -1,0 +1,388 @@
+# Codex first wave. Official free sources only; sizes from HEAD requests on 2026-10-25.
+# kind = "pdf": direct download. kind = "html": doc site or HTML-only book, skipped for now.
+
+# --- python ---
+[[item]]
+id = "whatsnew-3.15"
+topic = "python"
+title = "What's New In Python 3.15"
+authors = "Python Software Foundation"
+year = 2026
+url = "https://docs.python.org/3/whatsnew/3.15.html"
+kind = "html"
+licence = "PSF License (Python documentation)"
+bytes = 443961
+
+[[item]]
+id = "whatsnew-3.14"
+topic = "python"
+title = "What's New In Python 3.14"
+authors = "Python Software Foundation"
+year = 2025
+url = "https://docs.python.org/3/whatsnew/3.14.html"
+kind = "html"
+licence = "PSF License (Python documentation)"
+bytes = 554786
+
+[[item]]
+id = "whatsnew-3.13"
+topic = "python"
+title = "What's New In Python 3.13"
+authors = "Python Software Foundation"
+year = 2024
+url = "https://docs.python.org/3/whatsnew/3.13.html"
+kind = "html"
+licence = "PSF License (Python documentation)"
+bytes = 509813
+
+[[item]]
+id = "whatsnew-3.12"
+topic = "python"
+title = "What's New In Python 3.12"
+authors = "Python Software Foundation"
+year = 2023
+url = "https://docs.python.org/3/whatsnew/3.12.html"
+kind = "html"
+licence = "PSF License (Python documentation)"
+bytes = 462833
+
+[[item]]
+id = "think-python-2e"
+topic = "python"
+title = "Think Python, 2nd Edition"
+authors = "Allen B. Downey"
+year = 2015
+url = "https://greenteapress.com/thinkpython2/thinkpython2.pdf"
+kind = "pdf"
+licence = "CC BY-NC 3.0"
+bytes = 907689
+
+[[item]]
+id = "python-data-science-handbook"
+topic = "python"
+title = "Python Data Science Handbook"
+authors = "Jake VanderPlas"
+year = 2016
+url = "https://jakevdp.github.io/PythonDataScienceHandbook/"
+kind = "html"
+licence = "CC BY-NC-ND 3.0 (text), MIT (code)"
+bytes = 0
+
+# --- software-engineering ---
+[[item]]
+id = "swe-at-google"
+topic = "software-engineering"
+title = "Software Engineering at Google"
+authors = "Titus Winters, Tom Manshreck, Hyrum Wright"
+year = 2020
+url = "https://abseil.io/resources/swe-book"
+kind = "html"
+licence = "CC BY-NC-ND 4.0"
+bytes = 0
+
+[[item]]
+id = "sre-book"
+topic = "software-engineering"
+title = "Site Reliability Engineering"
+authors = "Betsy Beyer, Chris Jones, Jennifer Petoff, Niall Richard Murphy"
+year = 2016
+url = "https://sre.google/sre-book/table-of-contents/"
+kind = "html"
+licence = "CC BY-NC-ND 4.0"
+bytes = 0
+
+[[item]]
+id = "pro-git-2e"
+topic = "software-engineering"
+title = "Pro Git, 2nd Edition (release 2.1.450)"
+authors = "Scott Chacon, Ben Straub"
+year = 2014
+url = "https://github.com/progit/progit2/releases/download/2.1.450/progit.pdf"
+kind = "pdf"
+licence = "CC BY-NC-SA 3.0"
+bytes = 18847129
+
+# --- cloud ---
+[[item]]
+id = "aws-well-architected"
+topic = "cloud"
+title = "AWS Well-Architected Framework (all six pillars)"
+authors = "Amazon Web Services"
+year = 2026
+url = "https://docs.aws.amazon.com/pdfs/wellarchitected/latest/framework/wellarchitected-framework.pdf"
+kind = "pdf"
+licence = "free online, AWS terms"
+bytes = 14189887
+
+[[item]]
+id = "gcp-architecture-framework"
+topic = "cloud"
+title = "Google Cloud Well-Architected Framework"
+authors = "Google Cloud"
+year = 2026
+url = "https://docs.cloud.google.com/architecture/framework"
+kind = "html"
+licence = "CC BY 4.0 (Google Cloud documentation)"
+bytes = 0
+
+[[item]]
+id = "azure-architecture-center"
+topic = "cloud"
+title = "Azure Architecture Center"
+authors = "Microsoft"
+year = 2026
+url = "https://learn.microsoft.com/en-us/azure/architecture/"
+kind = "html"
+licence = "free online, Microsoft Learn terms"
+bytes = 0
+
+# --- ml ---
+[[item]]
+id = "d2l"
+topic = "ml"
+title = "Dive into Deep Learning"
+authors = "Aston Zhang, Zachary C. Lipton, Mu Li, Alexander J. Smola"
+year = 2023
+url = "https://d2l.ai/d2l-en.pdf"
+kind = "pdf"
+licence = "CC BY-SA 4.0"
+bytes = 44685994
+
+[[item]]
+id = "mml-book"
+topic = "ml"
+title = "Mathematics for Machine Learning"
+authors = "Marc Peter Deisenroth, A. Aldo Faisal, Cheng Soon Ong"
+year = 2020
+url = "https://mml-book.github.io/book/mml-book.pdf"
+kind = "pdf"
+licence = "free PDF from the authors, personal use (Cambridge University Press)"
+bytes = 17565898
+
+[[item]]
+id = "islp"
+topic = "ml"
+title = "An Introduction to Statistical Learning with Applications in Python"
+authors = "Gareth James, Daniela Witten, Trevor Hastie, Robert Tibshirani, Jonathan Taylor"
+year = 2023
+# The authors' link redirects to a Google Drive download; kept as html until the downloader handles it.
+url = "https://hastie.su.domains/ISLP/ISLP_website.pdf.download.html"
+kind = "html"
+licence = "free PDF from the authors, personal use"
+bytes = 0
+
+# --- ai-llm ---
+[[item]]
+id = "slp3"
+topic = "ai-llm"
+title = "Speech and Language Processing, 3rd edition draft"
+authors = "Daniel Jurafsky, James H. Martin"
+year = 2025
+url = "https://web.stanford.edu/~jurafsky/slp3/ed3book.pdf"
+kind = "pdf"
+licence = "free draft from the authors"
+bytes = 26506144
+
+[[item]]
+id = "attention-is-all-you-need"
+topic = "ai-llm"
+title = "Attention Is All You Need"
+authors = "Vaswani et al."
+year = 2017
+url = "https://arxiv.org/pdf/1706.03762"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 2215244
+
+[[item]]
+id = "lora"
+topic = "ai-llm"
+title = "LoRA: Low-Rank Adaptation of Large Language Models"
+authors = "Hu et al."
+year = 2021
+url = "https://arxiv.org/pdf/2106.09685"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 1609513
+
+[[item]]
+id = "qlora"
+topic = "ai-llm"
+title = "QLoRA: Efficient Finetuning of Quantized LLMs"
+authors = "Dettmers et al."
+year = 2023
+url = "https://arxiv.org/pdf/2305.14314"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 1065470
+
+[[item]]
+id = "flashattention"
+topic = "ai-llm"
+title = "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness"
+authors = "Dao et al."
+year = 2022
+url = "https://arxiv.org/pdf/2205.14135"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 2630825
+
+# --- llm-agents ---
+[[item]]
+id = "react"
+topic = "llm-agents"
+title = "ReAct: Synergizing Reasoning and Acting in Language Models"
+authors = "Yao et al."
+year = 2022
+url = "https://arxiv.org/pdf/2210.03629"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 633805
+
+[[item]]
+id = "reflexion"
+topic = "llm-agents"
+title = "Reflexion: Language Agents with Verbal Reinforcement Learning"
+authors = "Shinn et al."
+year = 2023
+url = "https://arxiv.org/pdf/2303.11366"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 591097
+
+[[item]]
+id = "swe-agent"
+topic = "llm-agents"
+title = "SWE-agent: Agent-Computer Interfaces Enable Automated Software Engineering"
+authors = "Yang et al."
+year = 2024
+url = "https://arxiv.org/pdf/2405.15793"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 4963538
+
+# --- rag ---
+[[item]]
+id = "rag-lewis"
+topic = "rag"
+title = "Retrieval-Augmented Generation for Knowledge-Intensive NLP Tasks"
+authors = "Lewis et al."
+year = 2020
+url = "https://arxiv.org/pdf/2005.11401"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 885323
+
+[[item]]
+id = "self-rag"
+topic = "rag"
+title = "Self-RAG: Learning to Retrieve, Generate, and Critique through Self-Reflection"
+authors = "Asai et al."
+year = 2023
+url = "https://arxiv.org/pdf/2310.11511"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 1405127
+
+[[item]]
+id = "graphrag"
+topic = "rag"
+title = "From Local to Global: A Graph RAG Approach to Query-Focused Summarization"
+authors = "Edge et al."
+year = 2024
+url = "https://arxiv.org/pdf/2404.16130"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 6893854
+
+# --- local-models ---
+[[item]]
+id = "llama-cpp-readme"
+topic = "local-models"
+title = "llama.cpp README"
+authors = "ggml-org contributors"
+year = 2026
+url = "https://github.com/ggml-org/llama.cpp/blob/master/README.md"
+kind = "html"
+licence = "MIT"
+bytes = 0
+
+[[item]]
+id = "gguf-spec"
+topic = "local-models"
+title = "GGUF file format specification"
+authors = "ggml-org contributors"
+year = 2023
+url = "https://github.com/ggml-org/ggml/blob/master/docs/gguf.md"
+kind = "html"
+licence = "MIT"
+bytes = 0
+
+[[item]]
+id = "gptq"
+topic = "local-models"
+title = "GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers"
+authors = "Frantar et al."
+year = 2022
+url = "https://arxiv.org/pdf/2210.17323"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 521818
+
+[[item]]
+id = "awq"
+topic = "local-models"
+title = "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration"
+authors = "Lin et al."
+year = 2023
+url = "https://arxiv.org/pdf/2306.00978"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 19804976
+
+[[item]]
+id = "speculative-decoding"
+topic = "local-models"
+title = "Fast Inference from Transformers via Speculative Decoding"
+authors = "Leviathan, Kalman, Matias"
+year = 2022
+url = "https://arxiv.org/pdf/2211.17192"
+kind = "pdf"
+licence = "arXiv non-exclusive"
+bytes = 574982
+
+# --- data-science ---
+[[item]]
+id = "openintro-stats"
+topic = "data-science"
+title = "OpenIntro Statistics, 4th Edition"
+authors = "David Diez, Mine Çetinkaya-Rundel, Christopher Barr"
+year = 2019
+# The PDF is behind a pay-what-you-want form, so no direct link; html for now.
+url = "https://www.openintro.org/book/os/"
+kind = "html"
+licence = "CC BY-SA 3.0"
+bytes = 0
+
+[[item]]
+id = "think-stats-2e"
+topic = "data-science"
+title = "Think Stats, 2nd Edition"
+authors = "Allen B. Downey"
+year = 2014
+url = "https://greenteapress.com/thinkstats2/thinkstats2.pdf"
+kind = "pdf"
+licence = "CC BY-NC-SA 4.0"
+bytes = 2088824
+
+[[item]]
+id = "fpp3"
+topic = "data-science"
+title = "Forecasting: Principles and Practice, 3rd Edition"
+authors = "Rob J Hyndman, George Athanasopoulos"
+year = 2021
+# Refuses scripted downloads (403), so it is read online rather than fetched.
+url = "https://otexts.com/fpp3/"
+kind = "html"
+licence = "free online, authors' terms"
+bytes = 0
