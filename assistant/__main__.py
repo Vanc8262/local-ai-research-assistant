@@ -1,4 +1,4 @@
-"""Command line for Stage 1.
+"""Command line for the assistant.
 
     python -m assistant tiers                               list tiers and whether each is usable
     python -m assistant ask "prompt"                        ask the default (local) tier
@@ -6,6 +6,8 @@
                                                             the same prompt on several tiers, compared
     python -m assistant search "query"                      search through the local SearXNG
     python -m assistant show <run_id>                       print the steps of a logged run
+    python -m assistant proxy [--public]                    serve the tiers as an OpenAI-compatible
+                                                            endpoint for tools such as LDR
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -19,6 +21,7 @@ import httpx
 
 from .config import load_settings
 from .gateway import Gateway, PrivacyError, TierNotReady
+from .proxy import Proxy, make_server
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 
@@ -101,6 +104,24 @@ def cmd_show(settings, args) -> int:
     return 0
 
 
+def cmd_proxy(settings, args) -> int:
+    mode = "public: cloud tiers allowed" if args.public else "private: cloud tiers refused"
+    log = RunLog(settings.runs_dir, task=f"proxy ({mode})")
+    gateway = Gateway(settings, log)
+    server = make_server(Proxy(settings, gateway, private=not args.public), port=args.port or settings.proxy_port)
+    host, port = server.server_address[:2]
+    print(f"Serving tiers {', '.join(settings.tiers)} at http://{host}:{port}/v1 ({mode})")
+    print(f"Run log: {log.path}\nCtrl+C to stop.")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+        gateway.close()
+    return 0
+
+
 def _fmt(value, pattern: str) -> str:
     return "-" if value is None else pattern.format(value)
 
@@ -122,10 +143,15 @@ def main(argv: list[str] | None = None) -> int:
     find.add_argument("-n", "--limit", type=int, default=8)
     show = sub.add_parser("show", help="print the steps of a logged run")
     show.add_argument("run", help="run id or path to its .jsonl file")
+    proxy = sub.add_parser("proxy", help="serve the tiers as an OpenAI-compatible endpoint on 127.0.0.1")
+    proxy.add_argument("--port", type=int, default=None, help="default: proxy_port in assistant.toml")
+    proxy.add_argument("--public", action="store_true",
+                       help="every request in this session is public, so cloud tiers may receive it")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
-    handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show}[args.command]
+    handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
+               "proxy": cmd_proxy}[args.command]
     return handler(settings, args)
 
 
