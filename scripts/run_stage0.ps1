@@ -6,6 +6,7 @@ Run from the repo folder in PowerShell:
     powershell -ExecutionPolicy Bypass -File scripts\run_stage0.ps1             # smoke test, then full run, every model
     powershell -ExecutionPolicy Bypass -File scripts\run_stage0.ps1 -SmokeOnly  # 2 items per suite only
     powershell -ExecutionPolicy Bypass -File scripts\run_stage0.ps1 -Models qwen3.5-9b
+    powershell -ExecutionPolicy Bypass -File scripts\run_stage0.ps1 -Models qwen3.5-9b,gemma-4-e4b-qat
 
 What it does:
   1. Turns this folder into a git checkout of the GitHub repo if it is not one yet.
@@ -22,6 +23,9 @@ param(
     [string[]]$Models = @("qwen3.5-9b", "gemma-4-12b-qat"),
     [int]$Context = 8192
 )
+
+# With -File, "-Models a,b" arrives as one string "a,b"; split it so both forms work.
+$Models = @($Models | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path -Parent $PSScriptRoot)
