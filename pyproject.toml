@@ -1,7 +1,7 @@
 [project]
 name = "local-ai-research-assistant"
 version = "0.0.1"
-description = "Local-first AI research and implementation assistant. Stage 0: model benchmark harness."
+description = "Local-first AI research and implementation assistant: model gateway, run log and Stage 0 benchmark harness."
 requires-python = ">=3.11"
 dependencies = [
     "httpx>=0.27",
@@ -15,7 +15,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["bench*"]
+include = ["bench*", "assistant*"]
 
 [tool.setuptools.package-data]
 bench = ["data/*.json", "data/code_tasks/*/*"]

@@ -1,0 +1,40 @@
+# Stage 1 settings: the model tiers the assistant can call, and where the run log goes.
+# Keys are never stored here. A tier names the environment variable that holds its key.
+
+[assistant]
+default_tier = "local"
+backup_tier = "local-backup"
+runs_dir = "runs"                        # git-ignored; one JSONL file per run
+searxng_url = "http://127.0.0.1:8888"    # from compose.yaml
+
+# Local tiers: LM Studio on this PC. Chosen in Stage 0 (see README, "Stage 0 results").
+# 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
+[tiers.local]
+kind = "local"
+label = "Gemma 4 E4B QAT (LM Studio)"
+base_url = "http://127.0.0.1:1234/v1"
+model = "gemma-4-e4b-qat"
+temperature = 1.0
+max_tokens = 6000
+extra_body = { top_p = 0.95, top_k = 64 }
+
+[tiers.local-backup]
+kind = "local"
+label = "Qwen3.5 9B Q4_K_M (LM Studio)"
+base_url = "http://127.0.0.1:1234/v1"
+model = "qwen3.5-9b"
+temperature = 0.6
+max_tokens = 6000
+extra_body = { top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0 }
+
+# Free cloud tier: Gemini through Google's OpenAI-compatible endpoint.
+# On the free tier Google may use prompts to improve its products, so private
+# code never goes here (enforced by the gateway; see assistant/gateway.py).
+[tiers.gemini]
+kind = "cloud"
+label = "Gemini 2.5 Flash (free tier)"
+base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+model = "gemini-2.5-flash"
+api_key_env = "GEMINI_API_KEY"
+temperature = 1.0
+max_tokens = 6000
