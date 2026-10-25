@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** Stage 0 complete. Gemma 4 E4B QAT is the default local model and Qwen3.5 9B the backup (see [Stage 0 results](#stage-0-results)). The headroom test with Docker and SearXNG moves to the start of Stage 1. See [bench/README.md](bench/README.md) to run the harness.
+**Status:** Stage 1 in progress (model gateway, run log, SearXNG). Stage 0 complete: Gemma 4 E4B QAT is the default local model and Qwen3.5 9B the backup (see [Stage 0 results](#stage-0-results)). See [bench/README.md](bench/README.md) to run the harness.
 
 ## Goals
 
@@ -78,6 +78,21 @@ The code-locality check is default-deny. Anything read from a repo is tagged pri
 | 5. End to end | Research to plan to implementation to summary on a real repo | One real task completed from a single request |
 
 The thresholds are proposals and will be revised once Stage 0 produces real numbers.
+
+## Running it (Stage 1)
+
+Services run in Docker; models run in LM Studio on the Windows host.
+
+```powershell
+docker compose up -d                                   # SearXNG on http://127.0.0.1:8888
+python -m assistant tiers                              # which tiers are configured and reachable
+python -m assistant ask "Explain KV cache in one paragraph"            # default local tier
+python -m assistant ask --public -t local -t gemini "Explain KV cache in one paragraph"
+python -m assistant search "llama.cpp KV cache quantization"
+python -m assistant show <run_id>                      # the logged steps of a run
+```
+
+Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.
 
 ## Stage 0 results
 

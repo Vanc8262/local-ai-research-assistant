@@ -1,0 +1,14 @@
+# Only the settings that differ from SearXNG's defaults.
+use_default_settings: true
+
+server:
+  # The rate limiter protects public instances; this one only listens on 127.0.0.1.
+  limiter: false
+  image_proxy: false
+
+search:
+  safe_search: 0
+  # json lets the assistant call /search?q=...&format=json.
+  formats:
+    - html
+    - json
