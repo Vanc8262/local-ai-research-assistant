@@ -1,0 +1,20 @@
+# Services that run in Docker (WSL2). LM Studio stays on the Windows host for GPU access.
+#
+#   docker compose up -d       start
+#   docker compose down        stop
+#
+# Ports are bound to 127.0.0.1 only, so nothing is reachable from the local network.
+services:
+  searxng:
+    image: docker.io/searxng/searxng:latest
+    container_name: searxng
+    ports:
+      - "127.0.0.1:8888:8080"
+    volumes:
+      - ./services/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    environment:
+      SEARXNG_BASE_URL: http://127.0.0.1:8888/
+      # Any random text; only used to sign cookies. Override it in a git-ignored .env file.
+      SEARXNG_SECRET: ${SEARXNG_SECRET:-local-only-change-me}
+    mem_limit: 1g
+    restart: unless-stopped
