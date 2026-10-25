@@ -9,6 +9,13 @@ searxng_url = "http://127.0.0.1:8888"    # from compose.yaml
 proxy_port = 8765                        # python -m assistant proxy; LDR points here
 codex_dir = "~/Desktop/local-ai-codex"   # papers and books (private, outside the repo); see codex/catalog.toml
 
+# Stage 2: Local Deep Research, run in its own venv and pointed at the gateway proxy.
+[research]
+ldr_python = "~/.venvs/ldr/Scripts/python.exe"
+context_window = 32768
+iterations = 3
+timeout_s = 3600
+
 # Local tiers: LM Studio on this PC. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
 [tiers.local]

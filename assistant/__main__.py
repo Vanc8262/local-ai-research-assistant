@@ -9,6 +9,8 @@
     python -m assistant proxy [--public]                    serve the tiers as an OpenAI-compatible
                                                             endpoint for tools such as LDR
     python -m assistant codex list|fetch [--only id ...]    the local library of papers and books
+    python -m assistant research "question"                 a cited report from Local Deep Research
+    python -m assistant research --public -t gemini --search tavily "question"
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -24,6 +26,7 @@ from .codex import CatalogError, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
+from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 
@@ -152,6 +155,25 @@ def cmd_codex(settings, args) -> int:
     return 1 if failed else 0
 
 
+def cmd_research(settings, args) -> int:
+    log = RunLog(settings.runs_dir, task=f"research: {args.question[:200]}")
+    try:
+        result = run_research(settings, args.question, log, tier=args.tier, search=args.search,
+                              public=args.public, mode="report" if args.report else "quick")
+    except PrivacyError as exc:
+        print(f"blocked: {exc}")
+        return 1
+    except (TierNotReady, KeyError, ValueError) as exc:
+        print(f"not ready: {exc}")
+        return 1
+    if result.error:
+        print(f"research failed: {result.error}")
+    if result.summary:
+        print(result.report_path.read_text(encoding="utf-8"))
+    print(f"Run folder: {result.run_dir}\nRun log: {log.path}")
+    return 0 if result.summary and not result.error else 1
+
+
 def _fmt(value, pattern: str) -> str:
     return "-" if value is None else pattern.format(value)
 
@@ -181,11 +203,19 @@ def main(argv: list[str] | None = None) -> int:
     codex.add_argument("action", choices=("list", "fetch"))
     codex.add_argument("--catalog", default="codex/catalog.toml")
     codex.add_argument("--only", nargs="+", metavar="ID", help="fetch just these catalog ids")
+    research = sub.add_parser("research", help="a cited report from Local Deep Research, via the gateway")
+    research.add_argument("question")
+    research.add_argument("-t", "--tier", default=None, help="model tier for LDR (default: the default tier)")
+    research.add_argument("--search", choices=SEARCH_TOOLS, default="searxng")
+    research.add_argument("--public", action="store_true",
+                          help="the question holds nothing private, so cloud tiers and Tavily may see it")
+    research.add_argument("--report", action="store_true", help="a long sectioned report instead of a summary")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
-               "proxy": cmd_proxy, "codex": cmd_codex}[args.command]
+               "proxy": cmd_proxy, "codex": cmd_codex,
+               "research": cmd_research}[args.command]
     return handler(settings, args)
 
 

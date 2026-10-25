@@ -91,11 +91,16 @@ python -m assistant ask --public -t local -t gemini "Explain KV cache in one par
 python -m assistant search "llama.cpp KV cache quantization"
 python -m assistant show <run_id>                      # the logged steps of a run
 python -m assistant proxy                              # tiers as an OpenAI endpoint on http://127.0.0.1:8765/v1
+python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder
+python -m assistant research "What is new in Python 3.15?"             # cited report, local only
+python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
 ```
 
 Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.
 
 Tools that make their own model calls, such as Local Deep Research in Stage 2, point at `python -m assistant proxy` instead of LM Studio. The request's model name picks the tier (`local`, `local-backup` or `gemini`), and every call is logged and privacy-checked like `ask`. A proxy session is private unless started with `--public`. In a public session, a failed cloud call is retried once on the local tier.
+
+`research` runs Local Deep Research from its own venv (`[research] ldr_python`) with the proxy as its only model provider, and saves `report.md`, `sources.json` and LDR's raw `result.json` under `runs/<run_id>/`. Tavily sees the query, so like a cloud tier it needs `--public`.
 
 ## Stage 0 results
 
