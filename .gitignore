@@ -12,6 +12,9 @@ venv/
 .env
 .env.*
 !.env.example
+*[Kk]ey*.txt
+*[Tt]oken*.txt
+*.key
 
 # Run outputs
 runs/
