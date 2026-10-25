@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** Stage 0 in progress. Qwen3.5 9B and Gemma 4 12B QAT have a first baseline run at temperature 0 ([results/summary.md](results/summary.md)); a rerun with each maker's sampling settings comes next. See [bench/README.md](bench/README.md) to run the harness.
+**Status:** Stage 0 complete. Gemma 4 E4B QAT is the default local model and Qwen3.5 9B the backup (see [Stage 0 results](#stage-0-results)). The headroom test with Docker and SearXNG moves to the start of Stage 1. See [bench/README.md](bench/README.md) to run the harness.
 
 ## Goals
 
@@ -15,7 +15,7 @@ A local-first assistant that researches a topic and then implements the result i
 
 | Area | Decision |
 | --- | --- |
-| Hardware | RTX 3060 12 GB, 16 GB RAM, Windows. Local models in the 9B to 12B class, starting at 8K context |
+| Hardware | RTX 3060 12 GB, 16 GB RAM, Windows. Local models in the 4B to 9B class, up to 32K context |
 | Budget | Free cloud tiers only for now; a paid, hard-capped tier may be added later |
 | Code locality | Code from public GitHub repos may go to cloud tiers; code from private or unpublished repos never does |
 | Autonomy | The assistant edits repos on its own, on a git branch, gated by tests. It never commits to main |
@@ -78,6 +78,27 @@ The code-locality check is default-deny. Anything read from a repo is tagged pri
 | 5. End to end | Research to plan to implementation to summary on a real repo | One real task completed from a single request |
 
 The thresholds are proposals and will be revised once Stage 0 produces real numbers.
+
+## Stage 0 results
+
+Five models were benchmarked at 8K context on the RTX 3060, each with its maker's sampling settings ([results/summary.md](results/summary.md)). The two leaders were run again with a second seed and at 16K and 32K context.
+
+| Model | Tools | Code | Research | Vision | Speed | VRAM at 8K / 32K |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Gemma 4 E4B QAT (default)** | 90-97% | 100% (both seeds) | 98% | 100% | 74 tok/s | 4.8 / 5.2 GB |
+| **Qwen3.5 9B Q4_K_M (backup)** | 100% | 90% | 80-100% | 100% | 54 tok/s | 7.1 / 7.9 GB |
+| Granite 4.2 8B Q4_K_M | 97% | 70% | 98% | text only | 55 tok/s | 6.8 GB at 8K |
+| Qwen3.5 9B Q6_K | 80% | 90% | 98% | 100% | 42 tok/s | 8.5 GB at 8K |
+| Gemma 4 12B QAT | 90% | 80% | 100% | 100% | 40 tok/s | 9.3 GB at 8K |
+
+Ranges cover the second seed. Research and vision show the automatic score; manual 1-5 scores are in each run's `manual_scores.csv`.
+
+**Decision:** Gemma 4 E4B QAT is the default. It is the fastest, the most reliable on code, and leaves about 4 GB of system RAM free, which the 16 GB machine needs once Docker and SearXNG run. Its weak spot is recovering after a tool error (1 to 3 of 4), so Qwen3.5 9B, which handled tool calls best, is the backup for tool-heavy steps and for retries.
+
+**Limits found:**
+- Both leaders run 32K context fully on the GPU with no loss of speed.
+- LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU. Turning off "Keep Model in Memory" and turning on mmap did not change that. The figure grows during long runs, probably from the prompt cache, so long sessions should reload the model now and then.
+- Only one model fits in VRAM at a time, so a switch to the backup costs a reload.
 
 ## Stage 0 plan
 

@@ -1,0 +1,55 @@
+{
+  "harness_version": "0.1.0",
+  "started": "2026-10-24T20:56:39",
+  "model": "gemma-4-e4b-qat",
+  "model_label": "Gemma 4 E4B QAT",
+  "tag": "seed7",
+  "context_length": 8192,
+  "server_model_info": {
+    "id": "gemma-4-e4b-qat",
+    "object": "model",
+    "type": "vlm",
+    "publisher": "google",
+    "arch": "gemma4",
+    "compatibility_type": "gguf",
+    "quantization": "Q4_0",
+    "state": "loaded",
+    "max_context_length": 131072,
+    "loaded_context_length": 8192,
+    "capabilities": [
+      "tool_use"
+    ]
+  },
+  "base_url": "http://127.0.0.1:1234/v1",
+  "temperature": 1.0,
+  "max_tokens": 6000,
+  "seed": 7,
+  "extra_body": {
+    "top_p": 0.95,
+    "top_k": 64
+  },
+  "system_suffix": "",
+  "suites": [
+    "tools",
+    "code",
+    "speed",
+    "research",
+    "vision",
+    "headroom"
+  ],
+  "limit": null,
+  "machine": {
+    "platform": "Windows-10-10.0.19045-SP0",
+    "python": "3.13.15",
+    "ram_total_mb": 16314,
+    "ram_used_mb": 9715,
+    "ram_available_mb": 6599,
+    "swap_used_mb": 680,
+    "gpu": "NVIDIA GeForce RTX 3060",
+    "vram_total_mb": 12288,
+    "vram_used_mb": 4742,
+    "vram_free_mb": 7374,
+    "gpu_util_pct": 0,
+    "gpu_temp_c": 44
+  }
+}

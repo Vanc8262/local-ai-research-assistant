@@ -46,3 +46,31 @@ One row per run and suite. Scores are automatic; `manual_avg_1_to_5` is filled f
 | 20261024-185125_gemma-4-e4b-qat | Gemma 4 E4B QAT |  | 8192 | vision | 100.0 | 5 | 5 |  | 0.266 | 81.078 | 4787 | 3672 |  |
 | 20261024-185125_gemma-4-e4b-qat | Gemma 4 E4B QAT |  | 8192 | speed |  | 3 | 3 |  | 0.168 | 74.295 | 4787 | 3884 | generation 74.295 tok/s; long input first token 1.066 s |
 | 20261024-185125_gemma-4-e4b-qat | Gemma 4 E4B QAT |  | 8192 | headroom |  | 0 | 1 |  | 0.117 | 87.281 | 4787 | 3684 | Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | tools | 100.0 | 30 | 30 |  | 0.225 | 54.049 | 7110 | 5498 | valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 4/4 |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | code | 90.0 | 9 | 10 |  | 0.539 | 53.627 | 7116 | 3037 | 9 passed on the first try (2 attempts allowed) |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | research | 80.0 | 4 | 5 |  | 0.465 | 53.287 | 7098 | 1314 | fact recall 0.8, citation accuracy 0.8 (automatic part); 1 replies cut off by max_tokens |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | vision | 100.0 | 5 | 5 |  | 0.689 | 53.817 | 7132 | 518 |  |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | speed |  | 3 | 3 |  | 0.249 | 53.677 | 7115 | 2129 | generation 53.677 tok/s; long input first token 1.471 s |
+| 20261024-203814_qwen3.5-9b_seed7 | Qwen3.5 9B | seed7 | 8192 | headroom |  | 0 | 1 |  | 0.176 | 54.379 | 7075 | 548 | only 546 MB of RAM available; Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | tools | 90.0 | 27 | 30 |  | 0.147 | 72.817 | 4795 | 5873 | valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 1/4 |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | code | 100.0 | 10 | 10 |  | 0.346 | 72.125 | 4786 | 5361 | 10 passed on the first try (2 attempts allowed) |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | research | 97.5 | 5 | 5 |  | 0.234 | 73.546 | 4779 | 4661 | fact recall 0.95, citation accuracy 1.0 (automatic part) |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | vision | 100.0 | 5 | 5 |  | 0.325 | 74.767 | 4807 | 4349 |  |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | speed |  | 3 | 3 |  | 0.167 | 74.294 | 4779 | 4861 | generation 74.294 tok/s; long input first token 1.044 s |
+| 20261024-205639_gemma-4-e4b-qat_seed7 | Gemma 4 E4B QAT | seed7 | 8192 | headroom |  | 0 | 1 |  | 0.095 | 100.851 | 4807 | 4397 | Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-210723_qwen3.5-9b_ctx16k | Qwen3.5 9B | ctx16k | 16384 | tools | 96.7 | 29 | 30 |  | 0.223 | 53.983 | 7339 | 6019 | valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 3/4 |
+| 20261024-210723_qwen3.5-9b_ctx16k | Qwen3.5 9B | ctx16k | 16384 | research | 100.0 | 5 | 5 |  | 0.438 | 53.197 | 7337 | 3287 | fact recall 1.0, citation accuracy 1.0 (automatic part) |
+| 20261024-210723_qwen3.5-9b_ctx16k | Qwen3.5 9B | ctx16k | 16384 | speed |  | 3 | 3 |  | 0.239 | 53.501 | 7339 | 4286 | generation 53.501 tok/s; long input first token 1.477 s |
+| 20261024-210723_qwen3.5-9b_ctx16k | Qwen3.5 9B | ctx16k | 16384 | headroom |  | 0 | 1 |  | 0.305 | 54.156 | 7330 | 3016 | Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-212052_gemma-4-e4b-qat_ctx16k | Gemma 4 E4B QAT | ctx16k | 16384 | tools | 86.7 | 26 | 30 |  | 0.148 | 72.872 | 4930 | 5783 | valid call format 100%; single 10/10, no_tool 4/4, arguments 3/4, chain 8/8, recovery 1/4 |
+| 20261024-212052_gemma-4-e4b-qat_ctx16k | Gemma 4 E4B QAT | ctx16k | 16384 | research | 100.0 | 5 | 5 |  | 0.233 | 73.666 | 4929 | 5187 | fact recall 1.0, citation accuracy 1.0 (automatic part) |
+| 20261024-212052_gemma-4-e4b-qat_ctx16k | Gemma 4 E4B QAT | ctx16k | 16384 | speed |  | 3 | 3 |  | 0.16 | 74.376 | 4929 | 5389 | generation 74.376 tok/s; long input first token 1.061 s |
+| 20261024-212052_gemma-4-e4b-qat_ctx16k | Gemma 4 E4B QAT | ctx16k | 16384 | headroom |  | 0 | 1 |  | 0.15 | 92.728 | 4929 | 5162 | Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-212632_qwen3.5-9b_ctx32k | Qwen3.5 9B | ctx32k | 32768 | tools | 96.7 | 29 | 30 |  | 0.222 | 54.005 | 7868 | 6072 | valid call format 100%; single 10/10, no_tool 4/4, arguments 4/4, chain 8/8, recovery 3/4 |
+| 20261024-212632_qwen3.5-9b_ctx32k | Qwen3.5 9B | ctx32k | 32768 | research | 100.0 | 5 | 5 |  | 0.456 | 53.407 | 7866 | 2958 | fact recall 1.0, citation accuracy 1.0 (automatic part) |
+| 20261024-212632_qwen3.5-9b_ctx32k | Qwen3.5 9B | ctx32k | 32768 | speed |  | 3 | 3 |  | 0.244 | 53.503 | 7867 | 4373 | generation 53.503 tok/s; long input first token 1.477 s |
+| 20261024-212632_qwen3.5-9b_ctx32k | Qwen3.5 9B | ctx32k | 32768 | headroom |  | 0 | 1 |  | 0.308 | 54.612 | 7833 | 2728 | Docker not reachable; start Docker and SearXNG for a realistic reading |
+| 20261024-213946_gemma-4-e4b-qat_ctx32k | Gemma 4 E4B QAT | ctx32k | 32768 | tools | 86.7 | 26 | 30 |  | 0.149 | 73.045 | 5167 | 5722 | valid call format 100%; single 10/10, no_tool 4/4, arguments 3/4, chain 8/8, recovery 1/4 |
+| 20261024-213946_gemma-4-e4b-qat_ctx32k | Gemma 4 E4B QAT | ctx32k | 32768 | research | 100.0 | 5 | 5 |  | 0.231 | 73.853 | 5167 | 5073 | fact recall 1.0, citation accuracy 1.0 (automatic part) |
+| 20261024-213946_gemma-4-e4b-qat_ctx32k | Gemma 4 E4B QAT | ctx32k | 32768 | speed |  | 3 | 3 |  | 0.158 | 74.59 | 5167 | 5330 | generation 74.59 tok/s; long input first token 1.039 s |
+| 20261024-213946_gemma-4-e4b-qat_ctx32k | Gemma 4 E4B QAT | ctx32k | 32768 | headroom |  | 0 | 1 |  | 0.154 | 92.994 | 5167 | 5042 | Docker not reachable; start Docker and SearXNG for a realistic reading |
