@@ -1,0 +1,225 @@
+{
+  "tools": {
+    "name": "tools",
+    "score": 0.9666666666666667,
+    "passed": 29,
+    "total": 30,
+    "metrics": {
+      "format_valid_rate": 1.0,
+      "pass_by_category": {
+        "single": "10/10",
+        "no_tool": "4/4",
+        "arguments": "4/4",
+        "chain": "8/8",
+        "recovery": "3/4"
+      },
+      "calls": 79,
+      "call_errors": 0,
+      "median_ttft_s": 0.096,
+      "median_ttfa_s": 2.052,
+      "median_gen_tps": 54.102,
+      "median_total_s": 2.756,
+      "completion_tokens": 20223,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 6823,
+      "peak_ram_used_mb": 14909,
+      "peak_swap_used_mb": 496,
+      "peak_gpu_temp_c": 60,
+      "min_ram_available_mb": 1404
+    },
+    "skipped": null
+  },
+  "code": {
+    "name": "code",
+    "score": 0.7,
+    "passed": 7,
+    "total": 10,
+    "metrics": {
+      "passed_first_try": 6,
+      "attempts_allowed": 2,
+      "format_valid_rate": 0.6,
+      "calls": 14,
+      "call_errors": 0,
+      "median_ttft_s": 0.946,
+      "median_ttfa_s": 68.658,
+      "median_gen_tps": 50.839,
+      "median_total_s": 115.959,
+      "completion_tokens": 67761,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 7,
+      "peak_vram_used_mb": 6824,
+      "peak_ram_used_mb": 15793,
+      "peak_swap_used_mb": 562,
+      "peak_gpu_temp_c": 59,
+      "min_ram_available_mb": 521
+    },
+    "skipped": null
+  },
+  "speed": {
+    "name": "speed",
+    "score": null,
+    "passed": 3,
+    "total": 3,
+    "metrics": {
+      "repeats": 3,
+      "generate_tps": 55.159,
+      "long_input_ttft_s": 1.643,
+      "long_input_prompt_tps": 1164.846,
+      "reasoning_comparison": [
+        {
+          "reasoning": "on",
+          "wall_s": 37.392,
+          "stats": {
+            "input_tokens": 47,
+            "total_output_tokens": 2000,
+            "reasoning_output_tokens": 1997,
+            "tokens_per_second": 54.07282817391812,
+            "time_to_first_token_seconds": 0.045188
+          },
+          "answer": "",
+          "correct": false
+        },
+        {
+          "reasoning": "off",
+          "wall_s": 0.336,
+          "stats": {
+            "input_tokens": 47,
+            "total_output_tokens": 4,
+            "reasoning_output_tokens": 0,
+            "tokens_per_second": 52.41364851407307,
+            "time_to_first_token_seconds": 0.021386
+          },
+          "answer": "16:05",
+          "correct": false
+        }
+      ],
+      "calls": 9,
+      "call_errors": 0,
+      "median_ttft_s": 0.154,
+      "median_ttfa_s": 3.268,
+      "median_gen_tps": 55.159,
+      "median_total_s": 11.249,
+      "completion_tokens": 4732,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 6791,
+      "peak_ram_used_mb": 15028,
+      "peak_swap_used_mb": 528,
+      "peak_gpu_temp_c": 59,
+      "min_ram_available_mb": 1285
+    },
+    "skipped": null
+  },
+  "research": {
+    "name": "research",
+    "score": 0.975,
+    "passed": 5,
+    "total": 5,
+    "metrics": {
+      "mean_fact_recall": 0.95,
+      "mean_citation_accuracy": 1.0,
+      "score_is": "automatic part only; add manual scores",
+      "calls": 5,
+      "call_errors": 0,
+      "median_ttft_s": 0.56,
+      "median_ttfa_s": 43.371,
+      "median_gen_tps": 53.391,
+      "median_total_s": 45.267,
+      "completion_tokens": 12177,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 6791,
+      "peak_ram_used_mb": 15110,
+      "peak_swap_used_mb": 527,
+      "peak_gpu_temp_c": 59,
+      "min_ram_available_mb": 1204
+    },
+    "skipped": null
+  },
+  "vision": {
+    "name": "vision",
+    "score": null,
+    "passed": 0,
+    "total": 0,
+    "metrics": {},
+    "skipped": "model is not marked vision = true in bench.toml"
+  },
+  "headroom": {
+    "name": "headroom",
+    "score": null,
+    "passed": 0,
+    "total": 1,
+    "metrics": {
+      "ram_total_mb": 16314,
+      "ram_used_mb": 14505,
+      "ram_available_mb": 1808,
+      "swap_used_mb": 526,
+      "gpu": "NVIDIA GeForce RTX 3060",
+      "vram_total_mb": 12288,
+      "vram_used_mb": 6791,
+      "vram_free_mb": 5325,
+      "gpu_util_pct": 97,
+      "gpu_temp_c": 54,
+      "docker_containers": null,
+      "warnings": [
+        "only 1808 MB of RAM available",
+        "Docker not reachable; start Docker and SearXNG for a realistic reading"
+      ],
+      "top_processes": [
+        {
+          "name": "llama-server.exe",
+          "rss_mb": 10062
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 561
+        },
+        {
+          "name": "LM Studio.exe",
+          "rss_mb": 258
+        },
+        {
+          "name": "MsMpEng.exe",
+          "rss_mb": 244
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 236
+        },
+        {
+          "name": "LM Studio.exe",
+          "rss_mb": 172
+        },
+        {
+          "name": "MemCompression",
+          "rss_mb": 170
+        },
+        {
+          "name": "claude.exe",
+          "rss_mb": 160
+        }
+      ],
+      "calls": 1,
+      "call_errors": 0,
+      "median_ttft_s": 0.174,
+      "median_ttfa_s": 0.609,
+      "median_gen_tps": 57.333,
+      "median_total_s": 0.628,
+      "completion_tokens": 26,
+      "tokens_estimated": false,
+      "reasoning_observed": true,
+      "truncated_replies": 0,
+      "peak_vram_used_mb": 6791,
+      "peak_ram_used_mb": 14491,
+      "peak_swap_used_mb": 526,
+      "peak_gpu_temp_c": 59,
+      "min_ram_available_mb": 1823
+    },
+    "skipped": null
+  }
+}
