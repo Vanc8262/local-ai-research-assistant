@@ -58,6 +58,7 @@ def test_same_prompt_on_two_tiers_is_logged(tmp_path, monkeypatch):
         ("local", "local", "ok"), ("gemini", "cloud", "ok")]
     for step in steps:
         assert step["completion_tokens"] == 40 and step["gen_tps"] is not None
+        assert step["overall_tps"] > 0
         assert step["answer"] == "ready" and step["prompt"] == messages
     assert "secret-123" not in log.path.read_text(encoding="utf-8")
 
@@ -120,6 +121,7 @@ api_key_env = "TEST_GEMINI_KEY"
 ''', encoding="utf-8")
     monkeypatch.setenv("TEST_GEMINI_KEY", "k")
     assert main(["--config", str(config), "ask", "hello"]) == 1
-    assert "private requests stay local" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "blocked: tier 'gemini' leaves this PC" in out and "skipped" not in out
     (run,) = (tmp_path / "runs").glob("*.jsonl")
     assert [r.get("outcome") for r in read_run(run)] == [None, "blocked"]

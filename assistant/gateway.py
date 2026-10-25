@@ -53,7 +53,11 @@ class Gateway:
         result = self._client(tier).chat(
             tier.model, messages, temperature=tier.temperature,
             max_tokens=max_tokens or tier.max_tokens, extra_body=tier.extra_body)
+        # gen_tps counts from the first streamed token. Cloud tiers that think without
+        # streaming it send the whole answer at the end, so overall_tps is the fair comparison.
+        overall_tps = (round(result.completion_tokens / result.total_s, 3)
+                       if result.completion_tokens and result.total_s > 0 else None)
         self.log.step("model", **base, outcome="error" if result.error else "ok",
-                      **result.timing(), error=result.error,
+                      **result.timing(), overall_tps=overall_tps, error=result.error,
                       prompt=messages, answer=result.content)
         return result

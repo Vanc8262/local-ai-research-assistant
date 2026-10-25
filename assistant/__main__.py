@@ -51,18 +51,24 @@ def cmd_ask(settings, args) -> int:
             try:
                 result = gateway.ask(name, messages, purpose="ask", private=not args.public,
                                      max_tokens=args.max_tokens)
-            except (PrivacyError, TierNotReady, KeyError) as exc:
-                print(f"skipped: {exc}")
-                rows.append((name, "skipped", None, None, None, None))
+            except PrivacyError as exc:
+                print(f"blocked: {exc}")
+                rows.append((name, "blocked", None, None, None, None))
+                continue
+            except (TierNotReady, KeyError) as exc:
+                print(f"not ready: {exc}")
+                rows.append((name, "not_ready", None, None, None, None))
                 continue
             print(result.error or result.content)
-            rows.append((name, "error" if result.error else "ok", result.completion_tokens,
-                         result.ttft_s, result.gen_tps, result.total_s))
+            tokens = result.completion_tokens
+            overall = tokens / result.total_s if tokens and result.total_s > 0 else None
+            rows.append((name, "error" if result.error else "ok", tokens, result.ttft_s, overall, result.total_s))
     finally:
         gateway.close()
-    print(f"\n{'tier':<14} {'outcome':<8} {'tokens':>7} {'first tok':>10} {'tok/s':>7} {'total':>7}")
+    # tok/s here is tokens over total time, which is comparable across local and cloud tiers.
+    print(f"\n{'tier':<14} {'outcome':<9} {'tokens':>7} {'first tok':>10} {'tok/s':>7} {'total':>7}")
     for name, outcome, tokens, ttft, tps, total in rows:
-        print(f"{name:<14} {outcome:<8} {_fmt(tokens, '{}'):>7} {_fmt(ttft, '{:.2f} s'):>10} "
+        print(f"{name:<14} {outcome:<9} {_fmt(tokens, '{}'):>7} {_fmt(ttft, '{:.2f} s'):>10} "
               f"{_fmt(tps, '{:.1f}'):>7} {_fmt(total, '{:.1f} s'):>7}")
     print(f"\nRun log: {log.path}")
     return 0 if all(row[1] == "ok" for row in rows) else 1
@@ -90,7 +96,7 @@ def cmd_show(settings, args) -> int:
         detail = (f"{record.get('tier')} ({record.get('tier_kind')}) {record.get('model', '')}"
                   if record["kind"] == "model" else f"{record.get('query', '')!r} -> {record.get('hits')} hits")
         print(f"{record['step']:>3}. {record['kind']:<7} {record['outcome']:<9} {detail}  "
-              f"tokens={record.get('completion_tokens')} tok/s={record.get('gen_tps')} "
+              f"tokens={record.get('completion_tokens')} tok/s={record.get('overall_tps')} "
               f"total={record.get('total_s')} s")
     return 0
 
