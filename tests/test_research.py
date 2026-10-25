@@ -104,3 +104,15 @@ def test_overrides_point_ldr_at_the_proxy_and_stay_local(tmp_path):
     assert overrides["llm.openai_endpoint.url"] == "http://127.0.0.1:5555/v1"
     assert overrides["llm.require_local_endpoint"] is True and overrides["web.host"] == "127.0.0.1"
     assert "search.engine.web.tavily.api_key" not in overrides
+
+
+def test_show_prints_research_steps(tmp_path, capsys):
+    from assistant.__main__ import cmd_show
+    settings, log = settings_for(tmp_path), RunLog(tmp_path / "runs", task="r")
+    log.step("research", tier="local", search="searxng", outcome="ok", n_sources=4, elapsed_s=89.4)
+
+    class Args:
+        run = str(log.path)
+    cmd_show(settings, Args())
+    out = capsys.readouterr().out
+    assert "local + searxng -> 4 sources" in out and "total=89.4 s" in out

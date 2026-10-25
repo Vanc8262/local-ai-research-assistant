@@ -101,11 +101,17 @@ def cmd_show(settings, args) -> int:
         if record["event"] != "step":
             print(f"{record['event']}: {record.get('task', '')}")
             continue
-        detail = (f"{record.get('tier')} ({record.get('tier_kind')}) {record.get('model', '')}"
-                  if record["kind"] == "model" else f"{record.get('query', '')!r} -> {record.get('hits')} hits")
+        if record["kind"] == "model":
+            detail = f"{record.get('tier')} ({record.get('tier_kind')}) {record.get('model', '')}"
+        elif record["kind"] == "research":
+            detail = f"{record.get('tier')} + {record.get('search')} -> {record.get('n_sources')} sources"
+        elif record["kind"] == "download":
+            detail = f"{record.get('topic')}/{record.get('id')} {record.get('bytes')} bytes"
+        else:
+            detail = f"{record.get('query', '')!r} -> {record.get('hits')} hits"
         print(f"{record['step']:>3}. {record['kind']:<7} {record['outcome']:<9} {detail}  "
               f"tokens={record.get('completion_tokens')} tok/s={record.get('overall_tps')} "
-              f"total={record.get('total_s')} s")
+              f"total={record.get('total_s', record.get('elapsed_s'))} s")
     return 0
 
 
