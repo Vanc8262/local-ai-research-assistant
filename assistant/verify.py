@@ -15,6 +15,7 @@ and claims never leave the PC for verification.
 """
 from __future__ import annotations
 
+import difflib
 import json
 import re
 from dataclasses import asdict, dataclass, field
@@ -230,8 +231,29 @@ def parse_verdict(answer: str) -> dict:
     return {"verdict": verdict, "quote": str(data.get("quote") or ""), "reason": str(data.get("reason") or "")}
 
 
-def _normal(text: str) -> str:
-    return " ".join(re.sub(r"[“”\"'‘’]", "", text).lower().split())
+def _squash(text: str) -> str:
+    """Letters and digits only: ignores spacing, punctuation, table pipes and quote styles."""
+    text = re.sub(r"\[\d{1,2}:\d{2}(?::\d{2})?\]", " ", text)   # video transcript timestamps
+    return re.sub(r"[^a-z0-9]+", "", text.lower())
+
+
+def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
+    """True when every fragment of the quote (split at [...] or ...) is in the source, exactly
+    once spacing and punctuation are ignored, or as one run covering min_ratio of it. A quote
+    stitched together from separate places, or invented, fails."""
+    source = _squash(text)
+    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…", quote))
+             if len(p) >= 12]
+    if not parts:
+        return False
+    for part in parts:
+        if part in source:
+            continue
+        match = difflib.SequenceMatcher(None, part, source, autojunk=False).find_longest_match(
+            0, len(part), 0, len(source))
+        if match.size < min_ratio * len(part):
+            return False
+    return True
 
 
 def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None,
@@ -295,7 +317,7 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
     check.verdict, check.quote, check.reason = parsed["verdict"], parsed["quote"], parsed["reason"]
     if check.verdict == "unchecked":
         check.reason = "model reply was not a verdict: " + " ".join(raw.split())[:300]
-    if check.verdict == "supported" and check.quote and _normal(check.quote) not in _normal(text):
+    if check.verdict == "supported" and check.quote and not quote_in_source(check.quote, text):
         check.verdict, check.reason = "partial", "the model's quote is not in the source: " + check.reason
     if check.verdict == "supported" and check.missing_facts:
         check.verdict = "partial"

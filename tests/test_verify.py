@@ -187,3 +187,13 @@ def test_unparsed_reply_is_kept_for_diagnosis(tmp_path):
     gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
     (claim,) = verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler)).claims
     assert claim.verdict == "unchecked" and claim.checks[0].reason == "model reply was not a verdict: I am not sure."
+
+
+def test_quote_matching_tolerates_formatting_but_not_invention():
+    from assistant.verify import quote_in_source
+    page = "| Version | Status |\n| 3.15.0 | Released on 9 Oct 2026 |  The default is None : use [12:01] lazy imports."
+    assert quote_in_source("Released on 9 Oct 2026", page)
+    assert quote_in_source("The default is None: use lazy imports.", page)            # spacing, timestamp
+    assert quote_in_source("3.15.0 Released [...] The default is None", page)         # elision
+    assert not quote_in_source("Released on 19 Oct 2026 with the GIL removed entirely", page)
+    assert not quote_in_source("short", page)
