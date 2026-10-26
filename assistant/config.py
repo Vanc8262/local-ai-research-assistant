@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +39,20 @@ class Tier:
 
 
 @dataclass
+class ResearchSettings:
+    ldr_python: Path = Path("")          # LDR's own venv; empty means ~/.venvs/ldr
+    context_window: int = 32768
+    iterations: int = 3
+    timeout_s: int = 3600
+
+    def __post_init__(self) -> None:
+        if not str(self.ldr_python) or str(self.ldr_python) == ".":
+            scripts = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+            self.ldr_python = Path("~/.venvs/ldr") / scripts
+        self.ldr_python = Path(self.ldr_python).expanduser()
+
+
+@dataclass
 class Settings:
     default_tier: str = "local"
     backup_tier: str = ""
@@ -46,6 +61,7 @@ class Settings:
     proxy_port: int = 8765
     codex_dir: Path = Path("~/Desktop/local-ai-codex").expanduser()
     tiers: dict[str, Tier] = field(default_factory=dict)
+    research: ResearchSettings = field(default_factory=ResearchSettings)
 
     def tier(self, name: str) -> Tier:
         try:
@@ -65,6 +81,7 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
         proxy_port=int(main.get("proxy_port", 8765)),
         codex_dir=Path(main.get("codex_dir", "~/Desktop/local-ai-codex")).expanduser(),
     )
+    settings.research = ResearchSettings(**raw.get("research", {}))
     for name, entry in raw.get("tiers", {}).items():
         settings.tiers[name] = Tier(name=name, **entry)
     for name in (settings.default_tier, settings.backup_tier):
