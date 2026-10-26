@@ -211,7 +211,8 @@ def cmd_eval(settings, args) -> int:
     questions = load_questions(args.questions)
     if args.only:
         questions = [q for q in questions if q.id in args.only]
-    out_dir, rows = run_eval(settings, questions, args.mode or list(MODES), verify_tier=args.verify_tier)
+    out_dir, rows = run_eval(settings, questions, args.mode or list(MODES), verify_tier=args.verify_tier,
+                              reload=not args.no_reload)
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
@@ -263,6 +264,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
+    evaluate.add_argument("--no-reload", action="store_true",
+                          help="keep the loaded model instead of reloading it before each question")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)

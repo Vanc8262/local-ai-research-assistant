@@ -13,6 +13,8 @@ claims supported. Results go to runs/eval-<id>/summary.csv and summary.md.
 from __future__ import annotations
 
 import csv
+import shutil
+import subprocess
 import time
 import tomllib
 from dataclasses import dataclass
@@ -55,12 +57,28 @@ def load_questions(path: str | Path) -> list[Question]:
     return [Question(**entry) for entry in raw.get("question", [])]
 
 
+def reload_model(settings: Settings, tier_name: str | None = None, *, run=subprocess.run) -> None:
+    """Unload everything in LM Studio and load the tier's model fresh at the research context.
+
+    llama-server's host memory grows through a long session (8.5 GB in 35 minutes during the
+    first eval, probably the prompt cache), and 16 GB of RAM cannot carry that for a full eval.
+    """
+    tier = settings.tier(tier_name or settings.default_tier)
+    lms = shutil.which("lms") or str(Path("~/.lmstudio/bin/lms.exe").expanduser())
+    run([lms, "unload", "--all"], check=False, capture_output=True)
+    run([lms, "load", tier.lms_key or tier.model, "--context-length", str(settings.research.context_window),
+         "--gpu", "max", "--identifier", tier.model, "-y"], check=True, capture_output=True)
+
+
 def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
-             verify_tier: str | None = None, runner=None, transport=None) -> tuple[Path, list[dict]]:
+             verify_tier: str | None = None, reload: bool = False, runner=None, transport=None,
+             reloader=reload_model) -> tuple[Path, list[dict]]:
     out_dir = Path(settings.runs_dir) / f"eval-{new_run_id()}"
     out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     for question in questions:
+        if reload:
+            reloader(settings, verify_tier)
         for mode in modes:
             rows.append(_one(settings, question, mode, verify_tier, runner, transport))
             write_summary(out_dir, rows)   # after every run, so a long eval can be read as it goes

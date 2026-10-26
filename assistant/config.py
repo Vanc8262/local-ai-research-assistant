@@ -21,6 +21,7 @@ class Tier:
     temperature: float = 0.0
     max_tokens: int = 4000
     extra_body: dict = field(default_factory=dict)
+    lms_key: str = ""         # LM Studio model key for `lms load`, when it differs from `model`
 
     def __post_init__(self) -> None:
         if self.kind not in KINDS:

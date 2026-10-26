@@ -23,6 +23,7 @@ kind = "local"
 label = "Gemma 4 E4B QAT (LM Studio)"
 base_url = "http://127.0.0.1:1234/v1"
 model = "gemma-4-e4b-qat"
+lms_key = "gemma-4-e4b-it-qat"
 temperature = 1.0
 max_tokens = 6000
 extra_body = { top_p = 0.95, top_k = 64 }

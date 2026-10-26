@@ -79,3 +79,19 @@ def test_a_mode_that_cannot_run_is_recorded_not_fatal(tmp_path, monkeypatch):
 def test_shipped_questions_load():
     questions = load_questions(ROOT / "evals" / "research_questions.toml")
     assert len(questions) == 5 and all(q.expect for q in questions)
+
+
+def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):
+    from assistant.evaluate import reload_model
+    monkeypatch.delenv("TAVILY_API_KEY", raising=False)
+    settings = settings_for(tmp_path)
+    settings.tiers["local"].lms_key = "gemma-4-e4b-it-qat"
+    reloads, calls = [], []
+    questions = [Question(id="a", text="a"), Question(id="b", text="b")]
+    run_eval(settings, questions, ["hybrid"], reload=True, runner=["never-run"], transport=transport([]),
+             reloader=lambda s, tier: reloads.append(tier))
+    assert reloads == [None, None]
+
+    reload_model(settings, run=lambda cmd, **kw: calls.append(cmd[1:]))
+    assert calls == [["unload", "--all"], ["load", "gemma-4-e4b-it-qat", "--context-length", "32768",
+                                           "--gpu", "max", "--identifier", "gemma", "-y"]]
