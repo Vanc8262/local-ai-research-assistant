@@ -38,7 +38,7 @@ class Gateway:
 
     def ask(self, tier_name: str, messages: list[dict], *, purpose: str = "",
             private: bool = True, max_tokens: int | None = None,
-            tools: list[dict] | None = None) -> ChatResult:
+            tools: list[dict] | None = None, temperature: float | None = None) -> ChatResult:
         """Send one chat request to a tier and log it as a step."""
         tier = self.settings.tier(tier_name)
         base = {"tier": tier.name, "tier_kind": tier.kind, "model": tier.model,
@@ -52,7 +52,8 @@ class Gateway:
             raise TierNotReady(f"tier {tier.name!r} needs the {tier.api_key_env} environment variable")
 
         result = self._client(tier).chat(
-            tier.model, messages, tools=tools, temperature=tier.temperature,
+            tier.model, messages, tools=tools,
+            temperature=tier.temperature if temperature is None else temperature,
             max_tokens=max_tokens or tier.max_tokens, extra_body=tier.extra_body)
         # gen_tps counts from the first streamed token. Cloud tiers that think without
         # streaming it send the whole answer at the end, so overall_tps is the fair comparison.
