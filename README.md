@@ -94,6 +94,7 @@ python -m assistant proxy                              # tiers as an OpenAI endp
 python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
+python -m assistant verify <run_id>                    # check every claim's citations against its sources
 ```
 
 Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.
@@ -101,6 +102,8 @@ Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its 
 Tools that make their own model calls, such as Local Deep Research in Stage 2, point at `python -m assistant proxy` instead of LM Studio. The request's model name picks the tier (`local`, `local-backup` or `gemini`), and every call is logged and privacy-checked like `ask`. A proxy session is private unless started with `--public`. In a public session, a failed cloud call is retried once on the local tier.
 
 `research` runs Local Deep Research from its own venv (`[research] ldr_python`) with the proxy as its only model provider, and saves `report.md`, `sources.json` and LDR's raw `result.json` under `runs/<run_id>/`. Tavily sees the query, so like a cloud tier it needs `--public`.
+
+`verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported). The command exits with status 1 while any claim is uncited or unsupported, or cites a missing source, so it can gate a script.
 
 ## Stage 0 results
 

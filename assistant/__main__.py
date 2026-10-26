@@ -11,6 +11,7 @@
     python -m assistant codex list|fetch [--only id ...]    the local library of papers and books
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
+    python -m assistant verify <run_id>                     check a report's citations against its sources
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -29,6 +30,7 @@ from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
+from .verify import verify_run
 
 
 def cmd_tiers(settings, args) -> int:
@@ -177,7 +179,30 @@ def cmd_research(settings, args) -> int:
     if result.summary:
         print(result.report_path.read_text(encoding="utf-8"))
     print(f"Run folder: {result.run_dir}\nRun log: {log.path}")
+    if result.summary and args.verify:
+        return _verify(settings, result.run_dir, log, tier=None, private=True)
     return 0 if result.summary and not result.error else 1
+
+
+def cmd_verify(settings, args) -> int:
+    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
+    if not (run_dir / "report.md").exists():
+        print(f"no report.md in {run_dir}")
+        return 1
+    log = RunLog(settings.runs_dir, task=f"verify: {run_dir.name}")
+    return _verify(settings, run_dir, log, tier=args.tier, private=not args.public)
+
+
+def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool) -> int:
+    gateway = Gateway(settings, log)
+    try:
+        result = verify_run(run_dir, gateway, log, tier=tier, private=private)
+    finally:
+        gateway.close()
+    print((run_dir / "verification.md").read_text(encoding="utf-8"))
+    summary = result.summary()
+    print(f"Saved: {run_dir / 'verification.json'}")
+    return 0 if not (summary["uncited"] or summary["unsupported"] or summary["dangling_citations"]) else 1
 
 
 def _fmt(value, pattern: str) -> str:
@@ -216,12 +241,17 @@ def main(argv: list[str] | None = None) -> int:
     research.add_argument("--public", action="store_true",
                           help="the question holds nothing private, so cloud tiers and Tavily may see it")
     research.add_argument("--report", action="store_true", help="a long sectioned report instead of a summary")
+    research.add_argument("--verify", action="store_true", help="check the report's citations when it is done")
+    check = sub.add_parser("verify", help="check a research report's citations against its sources")
+    check.add_argument("run", help="research run id (a folder in runs/) or path to the folder")
+    check.add_argument("-t", "--tier", default=None, help="model tier for the support check (default: local)")
+    check.add_argument("--public", action="store_true", help="the report and its sources may go to a cloud tier")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
-               "research": cmd_research}[args.command]
+               "research": cmd_research, "verify": cmd_verify}[args.command]
     return handler(settings, args)
 
 
