@@ -132,3 +132,58 @@ def test_helpers():
     assert parse_verdict("no json here")["verdict"] == "unchecked"
     text = "filler " * 200 + "the zstd module compresses data " + "filler " * 200
     assert "zstd" in best_passages("the zstd module", text)[0]
+
+
+def test_lead_ins_and_bold_headings_are_not_claims_and_bullets_share_citations():
+    report = """# Q
+
+The main new features in Python 3.15 include:
+**Context from Python 3.14 (Previous Stable Release)**
+- **Subinterpreters** Python 3.14 introduced support for running subinterpreters from Python code. They share one process [6][7].
+"""
+    claims = split_claims(report)
+    assert [(c.text[:30], c.citations, c.inherited) for c in claims] == [
+        ("Subinterpreters Python 3.14 in", ["6", "7"], True),
+        ("They share one process .", ["6", "7"], False),
+    ]
+
+
+def test_snippet_is_used_when_the_page_is_boilerplate_and_unparsed_replies_are_retried(tmp_path):
+    run_dir = tmp_path / "runs" / "r2"
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.md").write_text("The talk explains lazy imports in Python 3.15 [1].\n", encoding="utf-8")
+    (run_dir / "sources.json").write_text(json.dumps([{
+        "index": "1", "title": "Video", "link": "https://youtube.com/watch?v=x",
+        "snippet": "In this talk: lazy imports in Python 3.15 explained."}]), encoding="utf-8")
+    replies = iter(["Let me think about this...",
+                    json.dumps({"verdict": "supported", "quote": "lazy imports in Python 3.15 explained."})])
+    prompts = []
+
+    def handler(request):
+        if request.url.host == "local":
+            prompts.append(json.loads(request.content)["messages"][0]["content"])
+            return httpx.Response(200, content=fake_model.sse({"content": next(replies)}))
+        return httpx.Response(200, text="<p>YouTube About Press Copyright</p>", headers={"content-type": "text/html"})
+
+    settings = settings_for(tmp_path)
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
+    (claim,) = verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler)).claims
+    assert claim.verdict == "supported" and claim.support == "1 of 1"
+    assert len(prompts) == 2 and "JSON object only" in prompts[1] and "lazy imports in Python 3.15" in prompts[0]
+
+
+def test_unparsed_reply_is_kept_for_diagnosis(tmp_path):
+    run_dir = make_run(tmp_path)
+    (run_dir / "report.md").write_text("Python 3.15 adds lazy imports through a keyword [1].\n", encoding="utf-8")
+
+    def handler(request):
+        if request.url.host == "local":
+            return httpx.Response(200, content=fake_model.sse({"content": "I am not sure."}))
+        return httpx.Response(200, text=PAGES["/3/whatsnew/3.15.html"], headers={"content-type": "text/html"})
+
+    settings = settings_for(tmp_path)
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
+    (claim,) = verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler)).claims
+    assert claim.verdict == "unchecked" and claim.checks[0].reason == "model reply was not a verdict: I am not sure."

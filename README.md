@@ -103,7 +103,7 @@ Tools that make their own model calls, such as Local Deep Research in Stage 2, p
 
 `research` runs Local Deep Research from its own venv (`[research] ldr_python`) with the proxy as its only model provider, and saves `report.md`, `sources.json` and LDR's raw `result.json` under `runs/<run_id>/`. Tavily sees the query, so like a cloud tier it needs `--public`.
 
-`verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported).
+`verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported). The command exits with status 1 while any claim is uncited or unsupported, or cites a missing source, so it can gate a script.
 
 ## Stage 0 results
 

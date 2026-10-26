@@ -36,6 +36,8 @@ which while where when what about also have has had been being were will would c
 such more most many much some other only just each both very like using used uses new""".split())
 PASSAGE_CHARS, PASSAGE_STEP, PASSAGES = 700, 500, 3
 MIN_CLAIM_CHARS = 40
+BOLD_HEADING_RE = re.compile(r"^\*\*[^*]+\*\*:?\s*$|^[^*]*\*\*\s*$")   # a bold line, or one ending in a stray **
+SNIPPET_JOIN = "\n[search snippet] "
 
 VERDICTS = ("supported", "partial", "unsupported", "unchecked")
 NO_SOURCE = "no source has this number"
@@ -67,6 +69,12 @@ class Claim:
     text: str
     citations: list[str]
     checks: list[Check] = field(default_factory=list)
+    inherited: bool = False   # citations borrowed from the next cited sentence of the same bullet
+
+    @property
+    def support(self) -> str:
+        """How many of the claim's sources support it, e.g. "1 of 2"."""
+        return f"{sum(c.verdict == 'supported' for c in self.checks)} of {len(self.checks)}"
 
     @property
     def verdict(self) -> str:
@@ -108,17 +116,34 @@ def split_claims(report: str) -> list[Claim]:
     body = report.split("\n## Sources", 1)[0]
     claims = []
     for line in body.splitlines():
-        line = line.strip().lstrip("-*•").strip()
-        if not line or line.startswith(("#", "|", "```")) or re.match(r"^\[\d+\].*https?://", line):
+        line = line.strip().lstrip("-•").strip()
+        if (not line or line.startswith(("#", "|", "```")) or re.match(r"^\[\d+\].*https?://", line)
+                or BOLD_HEADING_RE.match(line)):
             continue   # headings, tables, and source-list lines such as "[1] Title https://..."
-        for sentence in SENTENCE_RE.split(line):
+        line_claims = []
+        for sentence in SENTENCE_RE.split(line.lstrip("*").strip() if not line.startswith("**") else line):
             citations = []
             for group in CITATION_RE.findall(sentence):
                 citations += _expand(group)
-            text = CITATION_RE.sub("", sentence).strip()
+            text = " ".join(CITATION_RE.sub("", sentence).replace("**", "").split())
+            if not citations and _is_lead_in(text):
+                continue   # "The main new features include:" introduces a list; it claims nothing
             if citations or len(text) >= MIN_CLAIM_CHARS:
-                claims.append(Claim(text=" ".join(text.split()), citations=list(dict.fromkeys(citations))))
+                line_claims.append(Claim(text=text, citations=list(dict.fromkeys(citations))))
+        # A citation at the end of a bullet or paragraph usually covers the sentences before it.
+        following: list[str] = []
+        for claim in reversed(line_claims):
+            if claim.citations:
+                following = claim.citations
+            elif following:
+                claim.citations, claim.inherited = list(following), True
+        claims += line_claims
     return claims
+
+
+def _is_lead_in(text: str) -> bool:
+    """An uncited line that ends in a colon introduces the list or section after it."""
+    return text.endswith(":") and len(text) < 160
 
 
 def _expand(group: str) -> list[str]:
@@ -179,6 +204,9 @@ def fetch_source(client: httpx.Client, url: str, cache: Path) -> str:
 
 
 def missing_facts(claim: str, source: str) -> list[str]:
+    """Hard facts in the claim that the source never mentions. The version a report is about
+    counts too: "3.15 adds X" cited to a page that only covers 3.14 is the mistake to catch.
+    A missing fact only lowers "supported" to "partial"; it never makes a claim unsupported."""
     facts = list(dict.fromkeys(f.replace(" ", "") for f in FACT_RE.findall(claim)))
     compact = source.replace(" %", "%")
     return [fact for fact in facts if fact not in compact]
@@ -225,7 +253,8 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
 
     result = Verification(claims)
     (run_dir / "verification.json").write_text(json.dumps(
-        {"summary": result.summary(), "claims": [{**asdict(c), "verdict": c.verdict} for c in claims]},
+        {"summary": result.summary(), "claims": [{**asdict(c), "verdict": c.verdict, "support": c.support}
+                                                for c in claims]},
         ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "verification.md").write_text(verification_markdown(result), encoding="utf-8")
     log.step("verify", run=run_dir.name, tier=tier, outcome="ok", **result.summary())
@@ -238,21 +267,34 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
     if source is None:
         return Check(index=index, verdict="unsupported", reason=NO_SOURCE)
     url = source.get("link") or source.get("url") or ""
-    text = fetch_source(client, url, run_dir / "pages" / f"{index}.txt") if url.startswith("http") else ""
-    text = text or source.get("snippet") or ""
+    page = fetch_source(client, url, run_dir / "pages" / f"{index}.txt") if url.startswith("http") else ""
+    # Keep the search snippet too: some pages fetch as boilerplate (video sites, script-only
+    # pages) while the snippet still carries the text the report was written from.
+    snippet = source.get("snippet") or ""
+    text = page + SNIPPET_JOIN + snippet if page and snippet else page or snippet
     if not text:
         return Check(index=index, reason="source could not be read")
     check = Check(index=index, missing_facts=missing_facts(claim.text, text))
-    passages = "\n---\n".join(best_passages(claim.text, text))
-    prompt = PROMPT.format(claim=claim.text, index=index, title=source.get("title", ""), passages=passages)
-    try:
-        answer = gateway.ask(tier, [{"role": "user", "content": prompt}], purpose="verify",
-                             private=private, max_tokens=800)
-    except (PrivacyError, TierNotReady) as exc:
-        check.reason = str(exc)
-        return check
-    parsed = parse_verdict(answer.content if not answer.error else "")
+    passages = best_passages(claim.text, page) if page else []
+    if snippet:
+        passages.append(snippet)
+    prompt = PROMPT.format(claim=claim.text, index=index, title=source.get("title", ""),
+                           passages="\n---\n".join(passages))
+    parsed, raw = {"verdict": "unchecked", "quote": "", "reason": ""}, ""
+    for attempt in (prompt, prompt + "\n\nReply with the JSON object only, nothing before or after it."):
+        try:
+            answer = gateway.ask(tier, [{"role": "user", "content": attempt}], purpose="verify",
+                                 private=private, max_tokens=1500)
+        except (PrivacyError, TierNotReady) as exc:
+            check.reason = str(exc)
+            return check
+        raw = answer.error or answer.content
+        parsed = parse_verdict("" if answer.error else answer.content)
+        if parsed["verdict"] != "unchecked":
+            break
     check.verdict, check.quote, check.reason = parsed["verdict"], parsed["quote"], parsed["reason"]
+    if check.verdict == "unchecked":
+        check.reason = "model reply was not a verdict: " + " ".join(raw.split())[:300]
     if check.verdict == "supported" and check.quote and _normal(check.quote) not in _normal(text):
         check.verdict, check.reason = "partial", "the model's quote is not in the source: " + check.reason
     if check.verdict == "supported" and check.missing_facts:
@@ -272,9 +314,12 @@ def verification_markdown(result: Verification) -> str:
              f"{s['unchecked']} unchecked)",
              f"- Citations to a missing source: {s['dangling_citations']}", "", "## Claims that need attention", ""]
     flagged = [c for c in result.claims
-               if c.verdict != "supported" or any(k.reason == NO_SOURCE for k in c.checks)]
+               if c.verdict != "supported" or any(k.reason == NO_SOURCE for k in c.checks)
+               or any(k.verdict == "unsupported" for k in c.checks)]   # a source contradicts it
     for claim in flagged:
-        lines.append(f"- **{claim.verdict}** {claim.text} {''.join(f'[{i}]' for i in claim.citations)}")
+        cites = "".join(f"[{i}]" for i in claim.citations) + (" (inherited)" if claim.inherited else "")
+        support = f" ({claim.support} sources)" if claim.checks else ""
+        lines.append(f"- **{claim.verdict}**{support} {claim.text} {cites}")
         for check in claim.checks:
             facts = f" missing: {', '.join(check.missing_facts)}." if check.missing_facts else ""
             lines.append(f"  - [{check.index}] {check.verdict}.{facts} {check.reason}".rstrip())
