@@ -13,8 +13,10 @@ run is always private, whatever --public says.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass, field
@@ -123,6 +125,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
             raw = record.get("result") or {}
             result.summary = raw.get("summary") or raw.get("content") or ""
             result.sources = raw.get("sources") or raw.get("all_links_of_system") or []
+            result.summary, result.sources = merge_duplicate_sources(result.summary, result.sources)
         else:
             result.error = f"LDR exited {proc.returncode}: {_scrubbed(proc.stderr, secret)[-1500:]}"
     except FileNotFoundError:
@@ -142,6 +145,35 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
              elapsed_s=result.elapsed_s, n_sources=len(result.sources), report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
     return result
+
+
+CITATION_GROUP_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def merge_duplicate_sources(summary: str, sources: list[dict]) -> tuple[str, list[dict]]:
+    """LDR lists a passage once per search that returned it, so one codex chunk can be
+    [1], [2] and [3]. Keep the first of each (link, text) and point the citations at it,
+    so the same evidence is neither shown nor verified more than once."""
+    canonical, kept, first = {}, [], {}
+    for number, source in enumerate(sources, start=1):
+        index = str(source.get("index") or number)
+        text = source.get("full_content") or source.get("snippet") or ""
+        key = (source.get("link") or source.get("url") or "", hashlib.sha256(text.encode()).hexdigest())
+        if key in first:
+            canonical[index] = first[key]
+        else:
+            first[key] = canonical[index] = index
+            kept.append(source)
+    if len(kept) == len(sources):
+        return summary, sources
+
+    def regroup(match):
+        numbers = [canonical.get(n.strip(), n.strip()) for n in match.group(1).split(",")]
+        return "[" + ", ".join(dict.fromkeys(numbers)) + "]"
+    summary = CITATION_GROUP_RE.sub(regroup, summary)
+    # "[1], [1], [1]" -> "[1]"
+    summary = re.sub(r"(\[(\d+)\])(?:\s*,?\s*\[\2\])+", r"\1", summary)
+    return summary, kept
 
 
 def report_markdown(query: str, result: ResearchResult) -> str:

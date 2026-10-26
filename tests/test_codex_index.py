@@ -105,7 +105,7 @@ def test_codex_research_passes_the_index_to_ldr_and_stays_private(tmp_path):
     source = result.sources[0]
     assert result.error is None and source["search_tool"] == "codex"
     assert source["codex_job"] == {"index_dir": str(index_dir(settings)), "embed_url": "http://127.0.0.1:1234/v1",
-                                   "embed_model": settings.research.embed_model, "k": 6}
+                                   "embed_model": settings.research.embed_model, "k": 8}
     assert "file:///codex/llm-agents/react.pdf#page=1" in result.report_path.read_text(encoding="utf-8")
 
 
@@ -131,3 +131,17 @@ def test_verifier_checks_codex_sources_against_their_chunk_without_fetching(tmp_
     gateway.close()
     assert [c.verdict for c in result.claims] == ["supported"]
     assert "interleave reasoning traces" in prompts[0]
+
+
+def test_duplicate_sources_are_merged_and_citations_point_at_the_first():
+    from assistant.research import merge_duplicate_sources
+    chunk = {"link": "file:///c/qlora.pdf#page=2", "full_content": "NF4 is optimal for normal weights."}
+    sources = [{"index": "1", **chunk}, {"index": "2", **chunk}, {"index": "3", **chunk},
+               {"index": "4", "link": "file:///c/qlora.pdf#page=6", "full_content": "Matches 16-bit."},
+               {"index": "5", "link": "file:///c/qlora.pdf#page=6", "full_content": "Matches 16-bit."},
+               {"index": "6", "link": "file:///c/qlora.pdf#page=2", "full_content": "Another chunk."}]
+    summary = "NF4 is optimal [1], [2], [3]. It matches 16-bit [4, 5] and [2]. Also [6] and [1-3]."
+    merged, kept = merge_duplicate_sources(summary, sources)
+    assert [s["index"] for s in kept] == ["1", "4", "6"]
+    assert merged == "NF4 is optimal [1]. It matches 16-bit [4] and [1]. Also [6] and [1-3]."
+    assert merge_duplicate_sources("a [1].", sources[:1]) == ("a [1].", sources[:1])

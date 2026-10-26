@@ -5,7 +5,7 @@ so `assistant research` starts this file there as a subprocess. It imports nothi
 from the assistant package. The job arrives as JSON on stdin:
 
     {"query": "...", "mode": "quick" | "report", "overrides": {...}, "out": "path/result.json",
-     "codex": {"index_dir": "...", "embed_url": "...", "embed_model": "...", "k": 6}}
+     "codex": {"index_dir": "...", "embed_url": "...", "embed_model": "...", "k": 8}}
 
 "codex" is optional. When present, the codex index (see codex_index.py) is handed to
 LDR as a retriever named "codex", which the overrides select as the search tool. The
@@ -28,7 +28,7 @@ def main() -> int:
             from codex_index import load_retriever   # beside this file, which Python puts on sys.path
             codex = job["codex"]
             kwargs["retrievers"] = {"codex": load_retriever(codex["index_dir"], codex["embed_url"],
-                                                            codex["embed_model"], codex.get("k", 6))}
+                                                            codex["embed_model"], codex.get("k", 8))}
         run = generate_report if job.get("mode") == "report" else quick_summary
         result = run(job["query"], **kwargs)
     except Exception as exc:   # report any LDR failure to the caller instead of a traceback
