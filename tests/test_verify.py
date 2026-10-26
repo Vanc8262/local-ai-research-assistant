@@ -243,3 +243,19 @@ def test_model_reloads_every_n_verification_calls(tmp_path):
                reloader=lambda: reloads.append(1))
     calls = sum(1 for r in read_run(log.path) if r.get("kind") == "model")
     assert calls == 3 and len(reloads) == 1   # before the third call
+
+
+def test_verification_samples_at_temperature_zero(tmp_path):
+    run_dir, bodies = make_run(tmp_path), []
+    settings = settings_for(tmp_path)
+    settings.tiers["local"].temperature = 1.0   # the tier's writing preset
+
+    def handler(request):
+        if request.url.host == "local":
+            bodies.append(json.loads(request.content))
+        return transport([]).handle_request(request)
+
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
+    verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler))
+    assert bodies and all(body["temperature"] == 0.0 for body in bodies)

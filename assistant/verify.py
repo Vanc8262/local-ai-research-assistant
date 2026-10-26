@@ -36,6 +36,9 @@ STOPWORDS = set("""the and for with that this from into over than then they them
 which while where when what about also have has had been being were will would could should can
 such more most many much some other only just each both very like using used uses new""".split())
 PASSAGE_CHARS, PASSAGE_STEP, PASSAGES = 700, 500, 3
+# Verdicts are judgements, not writing: sample greedily so the same report gets the same
+# verdicts on every run, and a change in the score measures a change in the code.
+TEMPERATURE = 0.0
 MIN_CLAIM_CHARS = 40
 BOLD_HEADING_RE = re.compile(r"^\*\*[^*]+\*\*:?\s*$|^[^*]*\*\*\s*$")   # a bold line, or one ending in a stray **
 SNIPPET_JOIN = "\n[search snippet] "
@@ -337,7 +340,7 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
     for attempt in (prompt, prompt + "\n\nReply with the JSON object only, nothing before or after it."):
         try:
             answer = gateway.ask(tier, [{"role": "user", "content": attempt}], purpose="verify",
-                                 private=private, max_tokens=1500)
+                                 private=private, max_tokens=1500, temperature=TEMPERATURE)
         except (PrivacyError, TierNotReady) as exc:
             check.reason = str(exc)
             return check
@@ -386,7 +389,7 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
     prompt = COMBINED_PROMPT.format(claim=claim.text, passages="\n---\n".join(blocks))
     try:
         answer = gateway.ask(tier, [{"role": "user", "content": prompt}], purpose="verify",
-                             private=private, max_tokens=1500)
+                             private=private, max_tokens=1500, temperature=TEMPERATURE)
     except (PrivacyError, TierNotReady) as exc:
         check.reason = str(exc)
         return check
@@ -394,13 +397,23 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
     verdict = data.get("verdict")
     check.verdict = verdict if verdict in ("supported", "partial", "unsupported") else "unchecked"
     check.reason = str(data.get("reason") or "")
-    quotes = [q for q in data.get("quotes") or [] if isinstance(q, dict)]
-    check.quote = " | ".join(f"[{q.get('source')}] {q.get('quote')}" for q in quotes)
+    # Quotes come as {"source", "quote"} objects; some replies give bare strings instead,
+    # which count when they are in any of the claim's sources.
+    quotes = []
+    for item in data.get("quotes") or []:
+        if isinstance(item, dict):
+            quotes.append((str(item.get("source") or "").strip("[] "), str(item.get("quote") or "")))
+        elif isinstance(item, str):
+            quotes.append(("", item))
+    quotes = [(source, quote) for source, quote in quotes if quote.strip()]
+    check.quote = " | ".join(f"[{source or '?'}] {quote}" for source, quote in quotes)
     if check.verdict == "supported":
-        bad = [q for q in quotes
-               if not quote_in_source(str(q.get("quote") or ""), texts.get(str(q.get("source")), ""))]
+        bad = [quote for source, quote in quotes
+               if not (quote_in_source(quote, texts[source]) if source in texts
+                       else any(quote_in_source(quote, text) for text in texts.values()))]
         if not quotes or bad:
-            check.verdict, check.reason = "partial", "a quote is not in its source: " + check.reason
+            check.verdict = "partial"
+            check.reason = ("no quotes given; " if not quotes else "a quote is not in its source; ") + check.reason
         elif check.missing_facts:
             check.verdict = "partial"
             check.reason = f"no source mentions {', '.join(check.missing_facts)}; " + check.reason
