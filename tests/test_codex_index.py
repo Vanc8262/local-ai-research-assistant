@@ -145,3 +145,19 @@ def test_duplicate_sources_are_merged_and_citations_point_at_the_first():
     assert [s["index"] for s in kept] == ["1", "4", "6"]
     assert merged == "NF4 is optimal [1]. It matches 16-bit [4] and [1]. Also [6] and [1-3]."
     assert merge_duplicate_sources("a [1].", sources[:1]) == ("a [1].", sources[:1])
+
+
+def test_keyword_terms_split_numbers_from_units_and_fusion_rewards_agreement():
+    from types import SimpleNamespace
+
+    from assistant.codex_index import fuse, terms
+    assert terms("QLoRA fits 65B on one 48GB GPU, Q4_K_M 3.5") == [
+        "qlora", "fits", "65", "b", "on", "one", "48", "gb", "gpu", "q", "4", "k", "m", "3.5"]
+
+    def doc(page, text):
+        return SimpleNamespace(metadata={"source": f"file:///q.pdf#page={page}"}, page_content=text)
+    a, b, c, d = doc(1, "48GB headline"), doc(2, "NF4"), doc(3, "paged"), doc(22, "appendix")
+    vector, keyword = [b, c, a, d], [a, d, b]
+    fused = fuse([vector, keyword], 3)
+    assert fused[0] in (a, b) and {x.page_content for x in fused} == {"48GB headline", "NF4", "appendix"}
+    assert len(fuse([[a, a], [a]], 5)) == 1
