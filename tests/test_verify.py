@@ -197,3 +197,49 @@ def test_quote_matching_tolerates_formatting_but_not_invention():
     assert quote_in_source("3.15.0 Released [...] The default is None", page)         # elision
     assert not quote_in_source("Released on 19 Oct 2026 with the GIL removed entirely", page)
     assert not quote_in_source("short", page)
+
+
+def test_sources_that_each_cover_part_of_a_list_are_judged_together(tmp_path):
+    run_dir = tmp_path / "runs" / "r3"
+    run_dir.mkdir(parents=True)
+    (run_dir / "report.md").write_text("The framework covers security and also reliability [1][2].\n",
+                                       encoding="utf-8")
+    (run_dir / "sources.json").write_text(json.dumps([
+        {"index": "1", "title": "A", "link": "https://a.example/p"},
+        {"index": "2", "title": "B", "link": "https://b.example/p"}]), encoding="utf-8")
+    pages = {"a.example": "<p>The security pillar protects data and systems.</p>",
+             "b.example": "<p>The reliability pillar covers recovery from failure.</p>"}
+    prompts = []
+
+    def handler(request):
+        if request.url.host == "local":
+            prompt = json.loads(request.content)["messages"][0]["content"]
+            prompts.append(prompt)
+            if "support it together" in prompt:
+                answer = {"verdict": "supported", "quotes": [
+                    {"source": "1", "quote": "The security pillar protects data and systems."},
+                    {"source": "2", "quote": "The reliability pillar covers recovery from failure."}]}
+            else:
+                answer = {"verdict": "partial", "quote": "", "reason": "covers one item"}
+            return httpx.Response(200, content=fake_model.sse({"content": json.dumps(answer)}))
+        return httpx.Response(200, text=pages[request.url.host], headers={"content-type": "text/html"})
+
+    settings = settings_for(tmp_path)
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
+    (claim,) = verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler)).claims
+    assert [c.verdict for c in claim.checks] == ["partial", "partial", "supported"]
+    assert claim.checks[-1].combined and claim.checks[-1].index == "1+2"
+    assert claim.verdict == "supported" and claim.support == "0 of 2 (together)"
+    assert len(prompts) == 3
+
+
+def test_model_reloads_every_n_verification_calls(tmp_path):
+    run_dir, reloads = make_run(tmp_path), []
+    settings = settings_for(tmp_path)
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=transport([]))
+    verify_run(run_dir, gateway, log, transport=transport([]), reload_every=2,
+               reloader=lambda: reloads.append(1))
+    calls = sum(1 for r in read_run(log.path) if r.get("kind") == "model")
+    assert calls == 3 and len(reloads) == 1   # before the third call

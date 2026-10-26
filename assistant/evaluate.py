@@ -32,6 +32,7 @@ MODES = {
     "hybrid": ("gemini", "tavily", True),
 }
 GATE_COVERAGE, GATE_ACCURACY = 1.0, 0.95
+RELOAD_EVERY = 40   # verification model calls between reloads; a 58-claim report makes ~100
 FIELDS = ("question", "mode", "outcome", "research_s", "verify_s", "sources", "claims", "coverage",
           "accuracy", "supported", "partial", "unsupported", "uncited", "facts", "local_tokens",
           "cloud_tokens", "gate", "run_id", "error")
@@ -80,12 +81,13 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
         if reload:
             reloader(settings, verify_tier)
         for mode in modes:
-            rows.append(_one(settings, question, mode, verify_tier, runner, transport))
+            rows.append(_one(settings, question, mode, verify_tier, runner, transport,
+                             (lambda: reloader(settings, verify_tier)) if reload else None))
             write_summary(out_dir, rows)   # after every run, so a long eval can be read as it goes
     return out_dir, rows
 
 
-def _one(settings, question: Question, mode: str, verify_tier, runner, transport) -> dict:
+def _one(settings, question: Question, mode: str, verify_tier, runner, transport, reload) -> dict:
     tier, search, public = MODES[mode]
     log = RunLog(settings.runs_dir, task=f"eval {question.id} ({mode}): {question.text}")
     row = {"question": question.id, "mode": mode, "run_id": log.run_id}
@@ -104,7 +106,8 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
     gateway = Gateway(settings, log, transport=transport)
     try:   # verification always runs on a local tier, whatever wrote the report
         summary = verify_run(result.run_dir, gateway, log, tier=verify_tier, private=True,
-                             transport=transport).summary()
+                             transport=transport, reload_every=RELOAD_EVERY if reload else 0,
+                             reloader=reload).summary()
     finally:
         gateway.close()
     row["verify_s"] = round(time.perf_counter() - started, 1)

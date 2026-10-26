@@ -55,6 +55,19 @@ Does the source support the claim? Answer with JSON only:
 "supported" means the passages state the claim, including any version numbers and figures in it.
 "partial" means they support part of it. Copy the quote exactly; do not paraphrase."""
 
+COMBINED_PROMPT = """You check citations in a research report. The claim cites several sources; judge
+whether they support it together, each source covering its own part.
+
+Claim: {claim}
+
+Passages, each marked with its source number:
+{passages}
+
+Answer with JSON only:
+{{"verdict": "supported" | "partial" | "unsupported", "quotes": [{{"source": "<number>", "quote": "<exact sentence>"}}], "reason": "<one short sentence>"}}
+"supported" means every part of the claim, including version numbers and figures, is stated by at
+least one of the sources. Give one quote per part. Copy quotes exactly; do not paraphrase."""
+
 
 @dataclass
 class Check:
@@ -63,6 +76,7 @@ class Check:
     missing_facts: list[str] = field(default_factory=list)
     quote: str = ""
     reason: str = ""
+    combined: bool = False    # one check of all the claim's sources together
 
 
 @dataclass
@@ -75,7 +89,9 @@ class Claim:
     @property
     def support(self) -> str:
         """How many of the claim's sources support it, e.g. "1 of 2"."""
-        return f"{sum(c.verdict == 'supported' for c in self.checks)} of {len(self.checks)}"
+        single = [c for c in self.checks if not c.combined]
+        together = " (together)" if any(c.combined and c.verdict == "supported" for c in self.checks) else ""
+        return f"{sum(c.verdict == 'supported' for c in single)} of {len(single)}{together}"
 
     @property
     def verdict(self) -> str:
@@ -256,13 +272,30 @@ def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
     return True
 
 
+class _ReloadingGateway:
+    """Passes calls to the gateway, reloading the local model every `every` calls. The local
+    server's host memory grows over a long verification (14 GB on a 58-claim report)."""
+
+    def __init__(self, gateway: Gateway, every: int, reloader) -> None:
+        self.gateway, self.every, self.reloader, self.calls = gateway, every, reloader, 0
+        self.settings = gateway.settings
+
+    def ask(self, *args, **kwargs):
+        if self.every and self.reloader and self.calls and self.calls % self.every == 0:
+            self.reloader()
+        self.calls += 1
+        return self.gateway.ask(*args, **kwargs)
+
+
 def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None,
-               private: bool = True, transport=None) -> Verification:
+               private: bool = True, transport=None, reload_every: int = 0,
+               reloader=None) -> Verification:
     run_dir = Path(run_dir)
     report = (run_dir / "report.md").read_text(encoding="utf-8")
     sources = {str(s.get("index") or n): s for n, s in
                enumerate(json.loads((run_dir / "sources.json").read_text(encoding="utf-8")), start=1)}
     tier = tier or gateway.settings.default_tier
+    gateway = _ReloadingGateway(gateway, reload_every, reloader)
     claims = split_claims(report)
     client = httpx.Client(follow_redirects=True, timeout=30.0, transport=transport,
                           headers={"User-Agent": "local-ai-research-assistant/0.1 (citation check)"})
@@ -270,6 +303,9 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
         for claim in claims:
             for index in claim.citations:
                 claim.checks.append(_check(claim, index, sources, client, run_dir, gateway, tier, private))
+            verdicts = {check.verdict for check in claim.checks}
+            if len(claim.checks) > 1 and "supported" not in verdicts and "partial" in verdicts:
+                claim.checks.append(_combined_check(claim, sources, client, run_dir, gateway, tier, private))
     finally:
         client.close()
 
@@ -288,12 +324,7 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
     source = sources.get(index)
     if source is None:
         return Check(index=index, verdict="unsupported", reason=NO_SOURCE)
-    url = source.get("link") or source.get("url") or ""
-    page = fetch_source(client, url, run_dir / "pages" / f"{index}.txt") if url.startswith("http") else ""
-    # Keep the search snippet too: some pages fetch as boilerplate (video sites, script-only
-    # pages) while the snippet still carries the text the report was written from.
-    snippet = source.get("snippet") or ""
-    text = page + SNIPPET_JOIN + snippet if page and snippet else page or snippet
+    page, snippet, text = _source_text(source, index, client, run_dir)
     if not text:
         return Check(index=index, reason="source could not be read")
     check = Check(index=index, missing_facts=missing_facts(claim.text, text))
@@ -323,6 +354,66 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
         check.verdict = "partial"
         check.reason = f"source does not mention {', '.join(check.missing_facts)}; " + check.reason
     return check
+
+
+def _source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, str, str]:
+    """(page, snippet, both). The snippet is kept because some pages fetch as boilerplate
+    (video sites, script-only pages) while the snippet carries the text the report used."""
+    url = source.get("link") or source.get("url") or ""
+    page = fetch_source(client, url, run_dir / "pages" / f"{index}.txt") if url.startswith("http") else ""
+    snippet = source.get("snippet") or ""
+    return page, snippet, (page + SNIPPET_JOIN + snippet if page and snippet else page or snippet)
+
+
+def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway, tier: str,
+                    private: bool) -> Check:
+    """One check of all the claim's sources together, for claims each source supports in part,
+    such as a sentence listing several features drawn from different pages."""
+    texts, blocks = {}, []
+    for index in claim.citations:
+        if index not in sources:
+            continue
+        page, snippet, text = _source_text(sources[index], index, client, run_dir)
+        if text:
+            texts[index] = text
+            parts = (best_passages(claim.text, page)[:2] if page else []) + ([snippet] if snippet else [])
+            blocks += [f"[{index}] {part}" for part in parts]
+    check = Check(index="+".join(texts), combined=True,
+                  missing_facts=missing_facts(claim.text, " ".join(texts.values())))
+    if len(texts) < 2:
+        check.reason = "fewer than two readable sources"
+        return check
+    prompt = COMBINED_PROMPT.format(claim=claim.text, passages="\n---\n".join(blocks))
+    try:
+        answer = gateway.ask(tier, [{"role": "user", "content": prompt}], purpose="verify",
+                             private=private, max_tokens=1500)
+    except (PrivacyError, TierNotReady) as exc:
+        check.reason = str(exc)
+        return check
+    data = _json_object("" if answer.error else answer.content)
+    verdict = data.get("verdict")
+    check.verdict = verdict if verdict in ("supported", "partial", "unsupported") else "unchecked"
+    check.reason = str(data.get("reason") or "")
+    quotes = [q for q in data.get("quotes") or [] if isinstance(q, dict)]
+    check.quote = " | ".join(f"[{q.get('source')}] {q.get('quote')}" for q in quotes)
+    if check.verdict == "supported":
+        bad = [q for q in quotes
+               if not quote_in_source(str(q.get("quote") or ""), texts.get(str(q.get("source")), ""))]
+        if not quotes or bad:
+            check.verdict, check.reason = "partial", "a quote is not in its source: " + check.reason
+        elif check.missing_facts:
+            check.verdict = "partial"
+            check.reason = f"no source mentions {', '.join(check.missing_facts)}; " + check.reason
+    return check
+
+
+def _json_object(answer: str) -> dict:
+    match = re.search(r"\{.*\}", answer, re.DOTALL)
+    try:
+        data = json.loads(match.group(0)) if match else {}
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def verification_markdown(result: Verification) -> str:

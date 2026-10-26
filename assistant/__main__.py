@@ -26,7 +26,7 @@ import httpx
 
 from .codex import CatalogError, fetch, load_catalog, read_manifest
 from .config import load_settings
-from .evaluate import MODES, load_questions, run_eval
+from .evaluate import MODES, load_questions, reload_model, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
@@ -192,13 +192,15 @@ def cmd_verify(settings, args) -> int:
         print(f"no report.md in {run_dir}")
         return 1
     log = RunLog(settings.runs_dir, task=f"verify: {run_dir.name}")
-    return _verify(settings, run_dir, log, tier=args.tier, private=not args.public)
+    return _verify(settings, run_dir, log, tier=args.tier, private=not args.public,
+                   reload_every=args.reload_every)
 
 
-def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool) -> int:
+def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload_every: int = 0) -> int:
     gateway = Gateway(settings, log)
     try:
-        result = verify_run(run_dir, gateway, log, tier=tier, private=private)
+        result = verify_run(run_dir, gateway, log, tier=tier, private=private, reload_every=reload_every,
+                            reloader=lambda: reload_model(settings, tier))
     finally:
         gateway.close()
     print((run_dir / "verification.md").read_text(encoding="utf-8"))
@@ -259,6 +261,8 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("run", help="research run id (a folder in runs/) or path to the folder")
     check.add_argument("-t", "--tier", default=None, help="model tier for the support check (default: local)")
     check.add_argument("--public", action="store_true", help="the report and its sources may go to a cloud tier")
+    check.add_argument("--reload-every", type=int, default=0, metavar="N",
+                       help="reload the local model in LM Studio every N model calls (long reports)")
     evaluate = sub.add_parser("eval", help="run the research eval: each question researched and verified")
     evaluate.add_argument("--questions", default="evals/research_questions.toml")
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
