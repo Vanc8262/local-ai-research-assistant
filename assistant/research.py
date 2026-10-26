@@ -8,6 +8,8 @@ report, its sources and LDR's raw result are saved under runs/<run_id>/.
 Privacy follows the rest of the assistant: a run is private unless public=True.
 A private run may use only local tiers and the local SearXNG. Tavily is a cloud
 service that sees the query, so it needs a public run, like a cloud model tier.
+The codex (search "codex") is the opposite: its pages are private, so a codex
+run is always private, whatever --public says.
 """
 from __future__ import annotations
 
@@ -18,13 +20,14 @@ import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import codex
 from .config import Settings
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .runlog import RunLog
 
 RUNNER = Path(__file__).with_name("ldr_runner.py")
-SEARCH_TOOLS = ("searxng", "tavily")
+SEARCH_TOOLS = ("searxng", "tavily", "codex")
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
 
 
@@ -74,6 +77,9 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
 
     if search not in SEARCH_TOOLS:
         raise ValueError(f"search must be one of {SEARCH_TOOLS}, not {search!r}")
+    if search == "codex" and public:
+        log.step("research", **base, outcome="blocked", error="the codex is private")
+        raise PrivacyError("the codex holds private documents, so codex research runs without --public")
     if not public and (settings.tier(tier).kind != "local" or search in CLOUD_SEARCH):
         log.step("research", **base, outcome="blocked", error="private research stays on this PC")
         raise PrivacyError(f"tier {tier!r} with search {search!r} leaves this PC; add --public "
@@ -83,6 +89,13 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     if key_env and not secret:
         log.step("research", **base, outcome="not_ready", error=f"{key_env} is not set")
         raise TierNotReady(f"search {search!r} needs the {key_env} environment variable")
+    codex_job = None
+    if search == "codex":
+        if not (codex.index_dir(settings) / "index.json").exists():
+            log.step("research", **base, outcome="not_ready", error="no codex index")
+            raise TierNotReady("the codex has no index yet; run: python -m assistant codex index")
+        codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
+                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
     gateway = Gateway(settings, log, transport=transport)
     server = make_server(Proxy(settings, gateway, private=not public), port=0)
@@ -93,6 +106,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     job = {"query": query, "mode": mode, "out": str(out),
            "overrides": build_overrides(settings, tier=tier, search=search, proxy_url=proxy_url,
                                         private=not public, tavily_key=secret)}
+    if codex_job:
+        job["codex"] = codex_job
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
            "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST": f"{settings.searxng_url},{proxy_url}"}

@@ -6,11 +6,17 @@ its author's or publisher's own free download. `fetch` downloads the PDFs into
 source, licence and SHA-256, so a citation to a codex file traces back to where
 it came from. The codex lives outside the repo and counts as private: only local
 tiers read it.
+
+`build_index` embeds the downloaded PDFs into <codex_dir>/.index with an embedding
+model on LM Studio (see codex_index.py, which runs in LDR's venv), so that
+`research --search codex` can cite codex pages.
 """
 from __future__ import annotations
 
 import csv
 import hashlib
+import json
+import subprocess
 import time
 import tomllib
 from dataclasses import dataclass
@@ -20,6 +26,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from .config import Settings
 from .runlog import RunLog
 
 TOPICS = ("python", "software-engineering", "cloud", "ml", "ai-llm", "llm-agents", "rag",
@@ -27,6 +34,8 @@ TOPICS = ("python", "software-engineering", "cloud", "ml", "ai-llm", "llm-agents
 KINDS = ("pdf", "html")
 MANIFEST_FIELDS = ("id", "topic", "title", "authors", "year", "url", "licence", "file", "bytes",
                    "sha256", "downloaded_at")
+INDEXER = Path(__file__).with_name("codex_index.py")
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
 USER_AGENT = "local-ai-research-assistant/0.1 (personal research library; one request at a time)"
 MAX_BYTES = 200 * 2**20   # no single book or paper in the catalog comes near this
 
@@ -181,3 +190,67 @@ def _download(client: httpx.Client, item: Item, codex_dir: Path) -> tuple[str, d
 
 class _TooLarge(Exception):
     pass
+
+
+def index_dir(settings: Settings) -> Path:
+    return Path(settings.codex_dir) / ".index"
+
+
+def embed_url(settings: Settings) -> str:
+    """The embedding server. The codex is private, so it must be on this PC."""
+    url = settings.research.embed_url or settings.tier(settings.default_tier).base_url
+    if urlparse(url).hostname not in LOOPBACK:
+        raise ValueError(f"the codex is private; embeddings must come from this PC, not {url}")
+    return url
+
+
+def index_meta(settings: Settings) -> dict:
+    path = index_dir(settings) / "index.json"
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+
+
+def index_is_current(settings: Settings, rows: list[dict]) -> bool:
+    meta = index_meta(settings)
+    indexed = {f["id"]: f.get("sha256") for f in meta.get("files", [])}
+    return (meta.get("embed_model") == settings.research.embed_model
+            and indexed == {row["id"]: row["sha256"] for row in rows})
+
+
+def build_index(settings: Settings, log: RunLog, *, force: bool = False,
+                runner: list[str] | None = None) -> dict:
+    """Embed every downloaded PDF into the codex index. Returns the indexer's record.
+
+    The index is rebuilt only when the set of PDFs (by checksum) or the embedding
+    model has changed, unless force=True. The indexer prints progress per file.
+    """
+    codex_dir = Path(settings.codex_dir)
+    rows = [row for row in read_manifest(codex_dir).values()
+            if row["file"].endswith(".pdf") and (codex_dir / row["file"]).exists()]
+    url = embed_url(settings)
+    base = {"n_files": len(rows), "embed_model": settings.research.embed_model}
+    if not rows:
+        log.step("codex-index", **base, outcome="error", error="no downloaded PDFs")
+        return {"error": f"no downloaded PDFs in {codex_dir}; run codex fetch first"}
+    if not force and index_is_current(settings, rows):
+        log.step("codex-index", **base, outcome="current", chunks=index_meta(settings).get("chunks"))
+        return {**index_meta(settings), "error": None, "current": True}
+
+    run_dir = Path(settings.runs_dir) / log.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    out = run_dir / "codex-index.json"
+    job = {"codex_dir": str(codex_dir), "index_dir": str(index_dir(settings)), "embed_url": url,
+           "embed_model": settings.research.embed_model, "files": rows, "out": str(out)}
+    command = runner or [str(settings.research.ldr_python), str(INDEXER)]
+    try:
+        # stderr is left on the console: the indexer prints a line per file
+        proc = subprocess.run(command, input=json.dumps(job), text=True, encoding="utf-8",
+                              stdout=subprocess.PIPE, timeout=settings.research.timeout_s)
+        record = (json.loads(out.read_text(encoding="utf-8")) if out.exists()
+                  else {"error": f"indexer exited {proc.returncode} without a result"})
+    except FileNotFoundError:
+        record = {"error": f"LDR's Python was not found at {command[0]} (set [research] ldr_python)"}
+    except subprocess.TimeoutExpired:
+        record = {"error": f"indexing took longer than {settings.research.timeout_s} s"}
+    log.step("codex-index", **base, outcome="error" if record.get("error") else "ok",
+             chunks=record.get("chunks"), elapsed_s=record.get("elapsed_s"), error=record.get("error"))
+    return record

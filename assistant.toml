@@ -15,6 +15,8 @@ ldr_python = "~/.venvs/ldr/Scripts/python.exe"
 context_window = 32768
 iterations = 3
 timeout_s = 3600
+embed_model = "text-embedding-nomic-embed-text-v1.5"   # codex index embeddings, served by LM Studio
+codex_k = 6                                            # codex chunks returned per search
 
 # Local tiers: LM Studio on this PC. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
