@@ -9,6 +9,7 @@
     python -m assistant proxy [--public]                    serve the tiers as an OpenAI-compatible
                                                             endpoint for tools such as LDR
     python -m assistant codex list|fetch [--only id ...]    the local library of papers and books
+    python -m assistant codex index [--force]               embed the codex PDFs for --search codex
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
@@ -24,7 +25,7 @@ from pathlib import Path
 
 import httpx
 
-from .codex import CatalogError, fetch, load_catalog, read_manifest
+from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .evaluate import MODES, load_questions, reload_model, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
@@ -111,6 +112,8 @@ def cmd_show(settings, args) -> int:
             detail = f"{record.get('tier')} + {record.get('search')} -> {record.get('n_sources')} sources"
         elif record["kind"] == "download":
             detail = f"{record.get('topic')}/{record.get('id')} {record.get('bytes')} bytes"
+        elif record["kind"] == "codex-index":
+            detail = f"{record.get('n_files')} PDFs -> {record.get('chunks')} chunks"
         else:
             detail = f"{record.get('query', '')!r} -> {record.get('hits')} hits"
         print(f"{record['step']:>3}. {record['kind']:<7} {record['outcome']:<9} {detail}  "
@@ -138,6 +141,8 @@ def cmd_proxy(settings, args) -> int:
 
 
 def cmd_codex(settings, args) -> int:
+    if args.action == "index":
+        return _codex_index(settings, args)
     try:
         items = load_catalog(args.catalog)
     except CatalogError as exc:
@@ -163,6 +168,23 @@ def cmd_codex(settings, args) -> int:
     if failed:
         print(f"Failed: {', '.join(failed)} (fix the URL in {args.catalog} and run again)")
     return 1 if failed else 0
+
+
+def _codex_index(settings, args) -> int:
+    log = RunLog(settings.runs_dir, task=f"codex index of {settings.codex_dir}")
+    try:
+        record = build_index(settings, log, force=args.force)
+    except ValueError as exc:
+        print(f"blocked: {exc}")
+        return 1
+    if record.get("error"):
+        print(f"index failed: {record['error']}\nIs the embedding model loaded? "
+              f"lms load {settings.research.embed_model}")
+        return 1
+    state = "already up to date" if record.get("current") else f"built in {record.get('elapsed_s')} s"
+    print(f"Codex index {state}: {len(record.get('files', []))} PDFs, {record.get('chunks')} chunks\n"
+          f"Run log: {log.path}")
+    return 0
 
 
 def cmd_research(settings, args) -> int:
@@ -245,10 +267,11 @@ def main(argv: list[str] | None = None) -> int:
     proxy.add_argument("--port", type=int, default=None, help="default: proxy_port in assistant.toml")
     proxy.add_argument("--public", action="store_true",
                        help="every request in this session is public, so cloud tiers may receive it")
-    codex = sub.add_parser("codex", help="list or download the papers and books in codex/catalog.toml")
-    codex.add_argument("action", choices=("list", "fetch"))
+    codex = sub.add_parser("codex", help="list, download or index the papers and books in codex/catalog.toml")
+    codex.add_argument("action", choices=("list", "fetch", "index"))
     codex.add_argument("--catalog", default="codex/catalog.toml")
     codex.add_argument("--only", nargs="+", metavar="ID", help="fetch just these catalog ids")
+    codex.add_argument("--force", action="store_true", help="rebuild the index even if it is up to date")
     research = sub.add_parser("research", help="a cited report from Local Deep Research, via the gateway")
     research.add_argument("question")
     research.add_argument("-t", "--tier", default=None, help="model tier for LDR (default: the default tier)")

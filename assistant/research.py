@@ -8,23 +8,28 @@ report, its sources and LDR's raw result are saved under runs/<run_id>/.
 Privacy follows the rest of the assistant: a run is private unless public=True.
 A private run may use only local tiers and the local SearXNG. Tavily is a cloud
 service that sees the query, so it needs a public run, like a cloud model tier.
+The codex (search "codex") is the opposite: its pages are private, so a codex
+run is always private, whatever --public says.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 import subprocess
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import codex
 from .config import Settings
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .runlog import RunLog
 
 RUNNER = Path(__file__).with_name("ldr_runner.py")
-SEARCH_TOOLS = ("searxng", "tavily")
+SEARCH_TOOLS = ("searxng", "tavily", "codex")
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
 
 
@@ -74,6 +79,9 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
 
     if search not in SEARCH_TOOLS:
         raise ValueError(f"search must be one of {SEARCH_TOOLS}, not {search!r}")
+    if search == "codex" and public:
+        log.step("research", **base, outcome="blocked", error="the codex is private")
+        raise PrivacyError("the codex holds private documents, so codex research runs without --public")
     if not public and (settings.tier(tier).kind != "local" or search in CLOUD_SEARCH):
         log.step("research", **base, outcome="blocked", error="private research stays on this PC")
         raise PrivacyError(f"tier {tier!r} with search {search!r} leaves this PC; add --public "
@@ -83,6 +91,13 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     if key_env and not secret:
         log.step("research", **base, outcome="not_ready", error=f"{key_env} is not set")
         raise TierNotReady(f"search {search!r} needs the {key_env} environment variable")
+    codex_job = None
+    if search == "codex":
+        if not (codex.index_dir(settings) / "index.json").exists():
+            log.step("research", **base, outcome="not_ready", error="no codex index")
+            raise TierNotReady("the codex has no index yet; run: python -m assistant codex index")
+        codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
+                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
     gateway = Gateway(settings, log, transport=transport)
     server = make_server(Proxy(settings, gateway, private=not public), port=0)
@@ -93,6 +108,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     job = {"query": query, "mode": mode, "out": str(out),
            "overrides": build_overrides(settings, tier=tier, search=search, proxy_url=proxy_url,
                                         private=not public, tavily_key=secret)}
+    if codex_job:
+        job["codex"] = codex_job
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
            "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST": f"{settings.searxng_url},{proxy_url}"}
@@ -108,6 +125,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
             raw = record.get("result") or {}
             result.summary = raw.get("summary") or raw.get("content") or ""
             result.sources = raw.get("sources") or raw.get("all_links_of_system") or []
+            result.summary, result.sources = merge_duplicate_sources(result.summary, result.sources)
         else:
             result.error = f"LDR exited {proc.returncode}: {_scrubbed(proc.stderr, secret)[-1500:]}"
     except FileNotFoundError:
@@ -127,6 +145,35 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
              elapsed_s=result.elapsed_s, n_sources=len(result.sources), report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
     return result
+
+
+CITATION_GROUP_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")
+
+
+def merge_duplicate_sources(summary: str, sources: list[dict]) -> tuple[str, list[dict]]:
+    """LDR lists a passage once per search that returned it, so one codex chunk can be
+    [1], [2] and [3]. Keep the first of each (link, text) and point the citations at it,
+    so the same evidence is neither shown nor verified more than once."""
+    canonical, kept, first = {}, [], {}
+    for number, source in enumerate(sources, start=1):
+        index = str(source.get("index") or number)
+        text = source.get("full_content") or source.get("snippet") or ""
+        key = (source.get("link") or source.get("url") or "", hashlib.sha256(text.encode()).hexdigest())
+        if key in first:
+            canonical[index] = first[key]
+        else:
+            first[key] = canonical[index] = index
+            kept.append(source)
+    if len(kept) == len(sources):
+        return summary, sources
+
+    def regroup(match):
+        numbers = [canonical.get(n.strip(), n.strip()) for n in match.group(1).split(",")]
+        return "[" + ", ".join(dict.fromkeys(numbers)) + "]"
+    summary = CITATION_GROUP_RE.sub(regroup, summary)
+    # "[1], [1], [1]" -> "[1]"
+    summary = re.sub(r"(\[(\d+)\])(?:\s*,?\s*\[\2\])+", r"\1", summary)
+    return summary, kept
 
 
 def report_markdown(query: str, result: ResearchResult) -> str:
