@@ -95,6 +95,7 @@ python -m assistant codex fetch                        # download codex/catalog.
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
 python -m assistant verify <run_id>                    # check every claim's citations against its sources
+python -m assistant eval                               # Stage 2 eval: 5 questions, local and hybrid, each verified
 ```
 
 Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.

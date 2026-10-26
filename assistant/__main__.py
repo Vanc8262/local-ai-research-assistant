@@ -12,6 +12,7 @@
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
+    python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -25,6 +26,7 @@ import httpx
 
 from .codex import CatalogError, fetch, load_catalog, read_manifest
 from .config import load_settings
+from .evaluate import MODES, load_questions, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
@@ -205,6 +207,16 @@ def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool) -> int
     return 0 if not (summary["uncited"] or summary["unsupported"] or summary["dangling_citations"]) else 1
 
 
+def cmd_eval(settings, args) -> int:
+    questions = load_questions(args.questions)
+    if args.only:
+        questions = [q for q in questions if q.id in args.only]
+    out_dir, rows = run_eval(settings, questions, args.mode or list(MODES), verify_tier=args.verify_tier)
+    print((out_dir / "summary.md").read_text(encoding="utf-8"))
+    print(f"Saved: {out_dir / 'summary.csv'}")
+    return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
+
+
 def _fmt(value, pattern: str) -> str:
     return "-" if value is None else pattern.format(value)
 
@@ -246,12 +258,18 @@ def main(argv: list[str] | None = None) -> int:
     check.add_argument("run", help="research run id (a folder in runs/) or path to the folder")
     check.add_argument("-t", "--tier", default=None, help="model tier for the support check (default: local)")
     check.add_argument("--public", action="store_true", help="the report and its sources may go to a cloud tier")
+    evaluate = sub.add_parser("eval", help="run the research eval: each question researched and verified")
+    evaluate.add_argument("--questions", default="evals/research_questions.toml")
+    evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
+    evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
+    evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
     args = parser.parse_args(argv)
 
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
-               "research": cmd_research, "verify": cmd_verify}[args.command]
+               "research": cmd_research, "verify": cmd_verify,
+               "eval": cmd_eval}[args.command]
     return handler(settings, args)
 
 
