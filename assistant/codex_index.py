@@ -45,10 +45,10 @@ def embeddings(url: str, model: str):
 
 def load_retriever(index_dir: str, url: str, model: str, k: int = 8):
     """Maximal marginal relevance: the k most relevant chunks from the top 4k that are
-    least alike, so one page does not fill every slot."""
+    least alike (relevance weighted 0.7, diversity 0.3), so one page does not fill every slot."""
     from langchain_community.vectorstores import FAISS
     store = FAISS.load_local(index_dir, embeddings(url, model), allow_dangerous_deserialization=True)
-    return store.as_retriever(search_type="mmr", search_kwargs={"k": k, "fetch_k": 4 * k})
+    return store.as_retriever(search_type="mmr", search_kwargs={"k": k, "fetch_k": 4 * k, "lambda_mult": 0.7})
 
 
 def page_documents(codex_dir: Path, row: dict) -> list:

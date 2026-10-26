@@ -259,3 +259,10 @@ def test_verification_samples_at_temperature_zero(tmp_path):
     gateway = Gateway(settings, log, transport=httpx.MockTransport(handler))
     verify_run(run_dir, gateway, log, transport=httpx.MockTransport(handler))
     assert bodies and all(body["temperature"] == 0.0 for body in bodies)
+
+
+def test_short_sources_are_passed_whole_and_long_ones_keep_their_tail():
+    chunk = "QLoRA quantizes the base model to 4 bits. " * 10 + "It adds adapters at every network layer."
+    assert best_passages("adapters at every network layer", chunk) == [chunk]
+    page = "filler text here. " * 200 + "The tail says adapters at every network layer."
+    assert any(p.endswith("every network layer.") for p in best_passages("adapters every network layer", page))

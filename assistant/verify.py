@@ -233,9 +233,13 @@ def missing_facts(claim: str, source: str) -> list[str]:
 
 
 def best_passages(claim: str, source: str) -> list[str]:
+    """The windows of the source that share most words with the claim. A source that fits
+    in two windows, such as a ~1,000-character codex chunk, is passed whole."""
+    if len(source) <= 2 * PASSAGE_CHARS:
+        return [source]
     words = {w for w in re.findall(r"[a-z0-9][a-z0-9.+_-]{2,}", claim.lower()) if w not in STOPWORDS}
-    windows = [source[start:start + PASSAGE_CHARS]
-               for start in range(0, max(len(source) - PASSAGE_STEP, 1), PASSAGE_STEP)]
+    starts = list(range(0, len(source) - PASSAGE_CHARS, PASSAGE_STEP)) + [len(source) - PASSAGE_CHARS]
+    windows = [source[start:start + PASSAGE_CHARS] for start in starts]   # the last one reaches the end
     scored = sorted(windows, key=lambda w: sum(word in w.lower() for word in words), reverse=True)
     return scored[:PASSAGES]
 
