@@ -31,10 +31,12 @@ class ProxyError(Exception):
 
 
 class Proxy:
-    def __init__(self, settings: Settings, gateway: Gateway, *, private: bool = True) -> None:
+    def __init__(self, settings: Settings, gateway: Gateway, *, private: bool = True,
+                 local_temperature: float | None = None) -> None:
         self.settings = settings
         self.gateway = gateway
         self.private = private
+        self.local_temperature = local_temperature   # overrides a local tier's own; cloud tiers keep theirs
         # LM Studio answers one request at a time anyway, and this keeps run-log
         # step numbers in order.
         self._lock = threading.Lock()
@@ -64,7 +66,7 @@ class Proxy:
                    "tools": body.get("tools")}
         with self._lock:
             try:
-                result = self.gateway.ask(tier.name, body["messages"], **options)
+                result = self.gateway.ask(tier.name, body["messages"], **options, temperature=self._temperature(tier))
             except PrivacyError as exc:
                 raise ProxyError(403, str(exc), "privacy_blocked") from None
             except TierNotReady as exc:
@@ -74,10 +76,13 @@ class Proxy:
             if result.error and self._can_fall_back(tier):
                 options["purpose"] = f"{PURPOSE} (fallback from {tier.name})"
                 tier = self.settings.tier(self.settings.default_tier)
-                result = self.gateway.ask(tier.name, body["messages"], **options)
+                result = self.gateway.ask(tier.name, body["messages"], **options, temperature=self._temperature(tier))
         if result.error:
             raise ProxyError(502, result.error, "upstream_error")
         return tier, result
+
+    def _temperature(self, tier: Tier) -> float | None:
+        return self.local_temperature if tier.kind == "local" else None
 
     def _can_fall_back(self, tier: Tier) -> bool:
         return tier.kind == "cloud" and self.settings.default_tier != tier.name

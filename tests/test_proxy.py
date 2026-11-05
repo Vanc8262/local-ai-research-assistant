@@ -121,3 +121,23 @@ def test_unknown_model_and_model_list(tmp_path):
     assert missing.status_code == 404 and "local" in missing.json()["error"]["message"]
     assert [m["id"] for m in models["data"]] == ["local", "gemini"]
     assert seen == []
+
+
+def test_writer_temperature_applies_to_local_tiers_only(tmp_path, monkeypatch):
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=fake_model.sse({"content": "ok"}))
+
+    monkeypatch.setenv("TEST_WRITER_KEY", "k")
+    settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma", temperature=1.0)
+    settings.tiers["cloud"] = Tier(name="cloud", kind="cloud", base_url="http://cloud/v1", model="flash",
+                                   api_key_env="TEST_WRITER_KEY", temperature=1.0)
+    gateway = Gateway(settings, RunLog(settings.runs_dir), transport=httpx.MockTransport(handler))
+    proxy = Proxy(settings, gateway, private=False, local_temperature=0.3)
+    proxy.complete({"model": "local", "messages": [{"role": "user", "content": "hi"}]})
+    proxy.complete({"model": "cloud", "messages": [{"role": "user", "content": "hi"}]})
+    gateway.close()
+    assert [b["temperature"] for b in bodies] == [0.3, 1.0]

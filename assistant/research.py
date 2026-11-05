@@ -100,7 +100,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                      "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
     gateway = Gateway(settings, log, transport=transport)
-    server = make_server(Proxy(settings, gateway, private=not public), port=0)
+    server = make_server(Proxy(settings, gateway, private=not public,
+                                local_temperature=settings.research.writer_temperature), port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     host, port = server.server_address[:2]
     proxy_url = f"http://{host}:{port}/v1"

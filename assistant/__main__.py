@@ -13,6 +13,7 @@
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
+python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
     python -m assistant vault plan                          what the picks in vault.toml would add
     python -m assistant vault sync [--only NAME ...]        store the picked models, nothing else
@@ -37,6 +38,7 @@ from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
+from .repair import RepairError, repair_run
 from .verify import verify_run
 from . import vault
 
@@ -210,6 +212,8 @@ def cmd_research(settings, args) -> int:
     if result.summary:
         print(result.report_path.read_text(encoding="utf-8"))
     print(f"Run folder: {result.run_dir}\nRun log: {log.path}")
+    if result.summary and args.repair:
+        return _repair(settings, result.run_dir, log, tier=None)
     if result.summary and args.verify:
         return _verify(settings, result.run_dir, log, tier=None, private=True)
     return 0 if result.summary and not result.error else 1
@@ -236,6 +240,31 @@ def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload
     summary = result.summary()
     print(f"Saved: {run_dir / 'verification.json'}")
     return 0 if not (summary["uncited"] or summary["unsupported"] or summary["dangling_citations"]) else 1
+
+
+def cmd_repair(settings, args) -> int:
+    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
+    if not (run_dir / "report.md").exists():
+        print(f"no report.md in {run_dir}")
+        return 1
+    log = RunLog(settings.runs_dir, task=f"repair: {run_dir.name}")
+    return _repair(settings, run_dir, log, tier=args.tier, reload_every=args.reload_every)
+
+
+def _repair(settings, run_dir: Path, log: RunLog, *, tier, reload_every: int = 0) -> int:
+    gateway = Gateway(settings, log)
+    try:
+        result = repair_run(run_dir, gateway, log, tier=tier, reload_every=reload_every,
+                            reloader=lambda: reload_model(settings, tier))
+    except RepairError as exc:
+        print(f"repair stopped, report unchanged: {exc}")
+        return 1
+    finally:
+        gateway.close()
+    print((run_dir / "repair.md").read_text(encoding="utf-8"))
+    print(f"Saved: {run_dir / 'report.md'} (original: report.original.md)")
+    return 0 if not (result.after["uncited"] or result.after["unsupported"] or result.after["partial"]
+                     or result.after["dangling_citations"]) else 1
 
 
 def cmd_eval(settings, args) -> int:
@@ -345,13 +374,19 @@ def main(argv: list[str] | None = None) -> int:
                           help="the question holds nothing private, so cloud tiers and Tavily may see it")
     research.add_argument("--report", action="store_true", help="a long sectioned report instead of a summary")
     research.add_argument("--verify", action="store_true", help="check the report's citations when it is done")
+    research.add_argument("--repair", action="store_true", help="check the citations, then fix or remove failed claims")
     check = sub.add_parser("verify", help="check a research report's citations against its sources")
     check.add_argument("run", help="research run id (a folder in runs/) or path to the folder")
     check.add_argument("-t", "--tier", default=None, help="model tier for the support check (default: local)")
     check.add_argument("--public", action="store_true", help="the report and its sources may go to a cloud tier")
     check.add_argument("--reload-every", type=int, default=0, metavar="N",
                        help="reload the local model in LM Studio every N model calls (long reports)")
-    evaluate = sub.add_parser("eval", help="run the research eval: each question researched and verified")
+    mend = sub.add_parser("repair", help="fix or remove the claims in a report that fail the citation check")
+    mend.add_argument("run", help="research run id (a folder in runs/) or path to the folder")
+    mend.add_argument("-t", "--tier", default=None, help="local model tier for the repair (default: local)")
+    mend.add_argument("--reload-every", type=int, default=0, metavar="N",
+                      help="reload the local model in LM Studio every N model calls (long reports)")
+    evaluate = sub.add_parser("eval", help="run the research eval: each question researched, verified and repaired")
     evaluate.add_argument("--questions", default="evals/research_questions.toml")
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
@@ -370,7 +405,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
-               "research": cmd_research, "verify": cmd_verify,
+               "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
                "eval": cmd_eval, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
