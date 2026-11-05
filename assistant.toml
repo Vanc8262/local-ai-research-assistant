@@ -8,6 +8,7 @@ runs_dir = "runs"                        # git-ignored; one JSONL file per run
 searxng_url = "http://127.0.0.1:8888"    # from compose.yaml
 proxy_port = 8765                        # python -m assistant proxy; LDR points here
 codex_dir = "~/Desktop/local-ai-codex"   # papers and books (private, outside the repo); see codex/catalog.toml
+vault_dir = "D:/model-vault"             # verified model weights (outside the repo); see assistant/vault.py
 
 # Stage 2: Local Deep Research, run in its own venv and pointed at the gateway proxy.
 [research]

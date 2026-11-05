@@ -64,6 +64,7 @@ class Settings:
     searxng_url: str = "http://127.0.0.1:8888"
     proxy_port: int = 8765
     codex_dir: Path = Path("~/Desktop/local-ai-codex").expanduser()
+    vault_dir: Path = Path("~/model-vault").expanduser()
     tiers: dict[str, Tier] = field(default_factory=dict)
     research: ResearchSettings = field(default_factory=ResearchSettings)
 
@@ -84,6 +85,7 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
         searxng_url=main.get("searxng_url", "http://127.0.0.1:8888").rstrip("/"),
         proxy_port=int(main.get("proxy_port", 8765)),
         codex_dir=Path(main.get("codex_dir", "~/Desktop/local-ai-codex")).expanduser(),
+        vault_dir=Path(main.get("vault_dir", "~/model-vault")).expanduser(),
     )
     settings.research = ResearchSettings(**raw.get("research", {}))
     for name, entry in raw.get("tiers", {}).items():

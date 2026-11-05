@@ -1,0 +1,30 @@
+# The models chosen for the model vault (assistant/vault.py). Nothing else goes in.
+#
+# Picking is a decision step after benchmarking: a model is added here only once its
+# bench results are in and Van has chosen to keep it. Then:
+#     python -m assistant vault plan     # what would change
+#     python -m assistant vault sync     # store exactly these picks
+# Removing an entry does not delete anything; `vault plan` lists it as "not picked".
+#
+# A Hugging Face pick names the full 40-character commit, so the stored files are exact,
+# and `include` picks which weight files to keep (default: all safetensors and GGUF).
+#
+# [[model]]
+# name = "Qwen/Qwen3.5-9B"                     # the full-precision original, for fine-tuning and re-quantizing
+# revision = "<40-character commit from the repo's Files tab>"
+# why = "backup tier; bench 20261024-174523"
+#
+# [[model]]
+# name = "lmstudio-community/Qwen3.5-9B-GGUF"
+# revision = "<commit>"
+# include = ["*Q4_K_M.gguf"]
+# why = "the runtime quant for the backup tier"
+#
+# An import pick files a model already on this PC, such as an LM Studio download:
+#
+# [[model]]
+# name = "google/gemma-4-E4B-it-qat-q4_0-gguf"
+# source = "import"
+# path = "C:/Users/vanc8/.lmstudio/models/google/gemma-4-E4B-it-qat-q4_0-gguf"
+# license = "apache-2.0"
+# why = "default tier; bench 20261024-185125"
