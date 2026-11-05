@@ -39,6 +39,8 @@ $ModelKeys = @{
     "qwen3.5-9b-q6"   = "local/qwen3.5-9b"
     "granite-4.2-8b"  = "granite-4.2-8b"
     "gemma-4-e4b-qat" = "gemma-4-e4b-it-qat"
+    # llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic-GGUF, Q4_K_M; check the key with `lms ls` after download
+    "gemma-4-e4b-heretic" = "gemma-4-e4b-it-ultra-uncensored-heretic"
 }
 
 function Step($text) { Write-Host "`n=== $text ===" -ForegroundColor Cyan }

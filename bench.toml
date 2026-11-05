@@ -60,3 +60,13 @@ extra_body = { top_p = 0.95, top_k = 64 }
 #   max_tokens = 4000
 #   system_suffix = "/no_think"            # appended to every system prompt
 #   extra_body = { reasoning_effort = "low" }  # merged into every request body
+
+# Planned: a Heretic (refusal-removed) copy of the default model. Heretic's authors and the
+# uploader report refusals and MMLU only; this run measures tool calling and code editing.
+# Same sampling as the stock E4B so the two runs compare directly.
+[[models]]
+id = "gemma-4-e4b-heretic"
+label = "Gemma 4 E4B Heretic"
+vision = true         # needs the model's mmproj file loaded alongside it
+temperature = 1.0     # Google's default for Gemma 4
+extra_body = { top_p = 0.95, top_k = 64 }

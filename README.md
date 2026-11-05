@@ -131,6 +131,28 @@ Ranges cover the second seed. Research and vision show the automatic score; manu
 - LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU. Turning off "Keep Model in Memory" and turning on mmap did not change that. The figure grows during long runs, probably from the prompt cache, so long sessions should reload the model now and then.
 - Only one model fits in VRAM at a time, so a switch to the backup costs a reload.
 
+## Planned model: Gemma 4 E4B Heretic
+
+[Heretic](https://github.com/p-e-w/heretic) (AGPL-3.0) removes a model's refusals without retraining. It ablates the direction in the model's activations that separates prompts it refuses from prompts it answers, and tunes that edit to keep the model as close to the original as it can. The candidate is a ready-made copy of the default model, [`llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic-GGUF`](https://huggingface.co/llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic-GGUF) at Q4_K_M (5.34 GB). Making one on this PC is not practical: Heretic's FAQ asks for about 16 GB of VRAM for an 8B model and about 24 GB of system RAM to save it.
+
+What has been published, all by the uploader: 3 refusals out of 100 test prompts against 99 for the stock model, KL divergence 0.0076 from the stock model, and MMLU 68.6% against 69.5%. Nobody has published what the edit does to tool calling or code editing, which this project depends on, so the benchmark measures that.
+
+| Test | Run | Compared with |
+| --- | --- | --- |
+| Tool calling, code editing | All six suites at 8K, seed 42 | Stock E4B, run `20261024-185125` |
+| Repeat with a second seed | `tools` and `code`, seed 7 | Stock E4B, run `20261024-205639_seed7` |
+| Long context | `tools` at 32K | Stock E4B at 32K (86.7%) |
+| Research, vision, speed, headroom | Included in the six-suite run | Stock E4B |
+
+```powershell
+lms load gemma-4-e4b-it-ultra-uncensored-heretic --context-length 8192 --gpu max --identifier gemma-4-e4b-heretic
+python -m bench run --model gemma-4-e4b-heretic --tag heretic
+```
+
+**Gate to keep it:** tools within 3 points of the stock model on both seeds, with recovery no worse than 1 of 4 and a 100% valid call format; code 9 or 10 of 10; research and vision within 5 points; speed and VRAM unchanged.
+
+**Use if it passes:** a third local model for chat only. Research and code runs stay on the stock Gemma E4B and Qwen. A model edited to follow every instruction will also follow instructions planted in the web pages and files it reads, so it stays out of the automated pipeline. If it fails, it stays a plain LM Studio chat model.
+
 ## Stage 0 plan
 
 Candidate models: Qwen3.5 9B and Gemma 4 12B QAT, with Gemma 4 E4B QAT and Ministral 3 8B Reasoning as optional extras.
