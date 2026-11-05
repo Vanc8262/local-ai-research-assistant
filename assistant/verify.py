@@ -41,6 +41,8 @@ PASSAGE_CHARS, PASSAGE_STEP, PASSAGES = 700, 500, 3
 TEMPERATURE = 0.0
 MIN_CLAIM_CHARS = 40
 BOLD_HEADING_RE = re.compile(r"^\*\*[^*]+\*\*:?\s*$|^[^*]*\*\*\s*$")   # a bold line, or one ending in a stray **
+NUMBERED_RE = re.compile(r"^\d+[.)]\s+")
+MAX_LABEL_CHARS = 100
 SNIPPET_JOIN = "\n[search snippet] "
 
 VERDICTS = ("supported", "partial", "unsupported", "unchecked")
@@ -88,6 +90,7 @@ class Claim:
     citations: list[str]
     checks: list[Check] = field(default_factory=list)
     inherited: bool = False   # citations borrowed from the next cited sentence of the same bullet
+    raw: str = ""             # the sentence exactly as the report has it, for the repair step
 
     @property
     def support(self) -> str:
@@ -136,7 +139,7 @@ def split_claims(report: str) -> list[Claim]:
     body = report.split("\n## Sources", 1)[0]
     claims = []
     for line in body.splitlines():
-        line = line.strip().lstrip("-•").strip()
+        line = NUMBERED_RE.sub("", line.strip().lstrip("-•").strip())
         if (not line or line.startswith(("#", "|", "```")) or re.match(r"^\[\d+\].*https?://", line)
                 or BOLD_HEADING_RE.match(line)):
             continue   # headings, tables, and source-list lines such as "[1] Title https://..."
@@ -146,10 +149,10 @@ def split_claims(report: str) -> list[Claim]:
             for group in CITATION_RE.findall(sentence):
                 citations += _expand(group)
             text = " ".join(CITATION_RE.sub("", sentence).replace("**", "").split())
-            if not citations and _is_lead_in(text):
+            if not citations and (_is_lead_in(text) or _is_label(text)):
                 continue   # "The main new features include:" introduces a list; it claims nothing
             if citations or len(text) >= MIN_CLAIM_CHARS:
-                line_claims.append(Claim(text=text, citations=list(dict.fromkeys(citations))))
+                line_claims.append(Claim(text=text, citations=list(dict.fromkeys(citations)), raw=sentence))
         # A citation at the end of a bullet or paragraph usually covers the sentences before it.
         following: list[str] = []
         for claim in reversed(line_claims):
@@ -164,6 +167,12 @@ def split_claims(report: str) -> list[Claim]:
 def _is_lead_in(text: str) -> bool:
     """An uncited line that ends in a colon introduces the list or section after it."""
     return text.endswith(":") and len(text) < 160
+
+
+def _is_label(text: str) -> bool:
+    """An uncited line with no closing punctuation names a list item, as in
+    "Cost Optimization (also referred to as Cost)"; it is not a sentence."""
+    return len(text) < MAX_LABEL_CHARS and not text.endswith((".", "!", "?"))
 
 
 def _expand(group: str) -> list[str]:
@@ -232,12 +241,16 @@ def missing_facts(claim: str, source: str) -> list[str]:
     return [fact for fact in facts if fact not in compact]
 
 
+def keywords(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9][a-z0-9.+_-]{2,}", text.lower()) if w not in STOPWORDS}
+
+
 def best_passages(claim: str, source: str) -> list[str]:
     """The windows of the source that share most words with the claim. A source that fits
     in two windows, such as a ~1,000-character codex chunk, is passed whole."""
     if len(source) <= 2 * PASSAGE_CHARS:
         return [source]
-    words = {w for w in re.findall(r"[a-z0-9][a-z0-9.+_-]{2,}", claim.lower()) if w not in STOPWORDS}
+    words = keywords(claim)
     starts = list(range(0, len(source) - PASSAGE_CHARS, PASSAGE_STEP)) + [len(source) - PASSAGE_CHARS]
     windows = [source[start:start + PASSAGE_CHARS] for start in starts]   # the last one reaches the end
     scored = sorted(windows, key=lambda w: sum(word in w.lower() for word in words), reverse=True)
@@ -294,10 +307,31 @@ class _ReloadingGateway:
         return self.gateway.ask(*args, **kwargs)
 
 
+def known_checks(run_dir: Path) -> dict[tuple[str, str], Check]:
+    """The verdicts already in a run's verification.json, keyed by claim and source, so a
+    second pass only asks the model about sentences that changed. An unchecked result is
+    left out, because a later try may get an answer."""
+    path = Path(run_dir) / "verification.json"
+    if not path.exists():
+        return {}
+    known = {}
+    for claim in json.loads(path.read_text(encoding="utf-8"))["claims"]:
+        for entry in claim["checks"]:
+            check = Check(**entry)
+            if check.verdict != "unchecked":
+                known[_check_key(claim["text"], "combined" if check.combined else check.index)] = check
+    return known
+
+
+def _check_key(text: str, index: str) -> tuple[str, str]:
+    return _squash(text), index
+
+
 def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None,
                private: bool = True, transport=None, reload_every: int = 0,
-               reloader=None) -> Verification:
+               reloader=None, known: dict | None = None) -> Verification:
     run_dir = Path(run_dir)
+    known = known or {}
     report = (run_dir / "report.md").read_text(encoding="utf-8")
     sources = {str(s.get("index") or n): s for n, s in
                enumerate(json.loads((run_dir / "sources.json").read_text(encoding="utf-8")), start=1)}
@@ -309,10 +343,12 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
     try:
         for claim in claims:
             for index in claim.citations:
-                claim.checks.append(_check(claim, index, sources, client, run_dir, gateway, tier, private))
+                claim.checks.append(known.get(_check_key(claim.text, index))
+                                    or _check(claim, index, sources, client, run_dir, gateway, tier, private))
             verdicts = {check.verdict for check in claim.checks}
             if len(claim.checks) > 1 and "supported" not in verdicts and "partial" in verdicts:
-                claim.checks.append(_combined_check(claim, sources, client, run_dir, gateway, tier, private))
+                claim.checks.append(known.get(_check_key(claim.text, "combined"))
+                                    or _combined_check(claim, sources, client, run_dir, gateway, tier, private))
     finally:
         client.close()
 

@@ -48,6 +48,7 @@ class ResearchSettings:
     embed_model: str = "text-embedding-nomic-embed-text-v1.5"   # LM Studio, for the codex index
     embed_url: str = ""                  # empty means the default tier's server
     codex_k: int = 8                     # codex chunks per search
+    writer_temperature: float | None = None   # local tiers while writing a report; None keeps the tier's
 
     def __post_init__(self) -> None:
         if not str(self.ldr_python) or str(self.ldr_python) == ".":

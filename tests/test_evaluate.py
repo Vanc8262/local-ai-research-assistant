@@ -95,3 +95,39 @@ def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):
     reload_model(settings, run=lambda cmd, **kw: calls.append(cmd[1:]))
     assert calls == [["unload", "--all"], ["load", "gemma-4-e4b-it-qat", "--context-length", "32768",
                                            "--gpu", "max", "--identifier", "gemma", "-y"]]
+
+
+FLAGGED_LDR = FAKE_LDR.replace('"Python 3.15 adds lazy imports [1]."',
+                               '"Python 3.15 adds lazy imports [1]. It also adds flying cars for every programmer [1]."')
+
+
+def flagged_transport():
+    def handler(request):
+        if request.url.host == "local":
+            prompt = json.loads(request.content)["messages"][0]["content"]
+            if "failed a citation check" in prompt:
+                answer = {"action": "remove", "sentence": ""}
+            elif "flying cars" in prompt:
+                answer = {"verdict": "unsupported", "quote": "", "reason": "not stated"}
+            elif "Claim:" in prompt:
+                answer = {"verdict": "supported", "quote": "Python 3.15 adds lazy imports."}
+            else:
+                answer = "research step"
+            content = answer if isinstance(answer, str) else json.dumps(answer)
+            return httpx.Response(200, content=fake_model.sse({"content": content}))
+        return httpx.Response(200, text="<p>Python 3.15 adds lazy imports.</p>", headers={"content-type": "text/html"})
+    return httpx.MockTransport(handler)
+
+
+def test_eval_scores_the_repaired_report_and_fails_one_that_lost_too_much(tmp_path):
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FLAGGED_LDR, encoding="utf-8")
+    question = Question(id="py", text="What is new?", expect=[["flying cars"], ["lazy imports"]])
+    out_dir, (row,) = run_eval(settings_for(tmp_path), [question], ["local"],
+                               runner=[sys.executable, str(script)], transport=flagged_transport())
+
+    assert (row["accuracy_before"], row["accuracy"]) == (0.5, 1.0)
+    assert (row["claims_before"], row["claims"], row["removed"]) == (2, 1, 1)
+    assert (row["facts_before"], row["facts"]) == (1.0, 0.5)
+    assert row["removed_share"] == 0.5 and row["gate"] == "fail"   # clean, but half the report is gone
+    assert "mean claims removed 50%" in (out_dir / "summary.md").read_text(encoding="utf-8")
