@@ -16,6 +16,7 @@ FAISS saves its docstore as a pickle, so load_retriever only ever opens the inde
 this file wrote into the codex folder.
 """
 import json
+import re
 import shutil
 import sys
 import time
@@ -44,11 +45,49 @@ def embeddings(url: str, model: str):
 
 
 def load_retriever(index_dir: str, url: str, model: str, k: int = 8):
-    """Maximal marginal relevance: the k most relevant chunks from the top 4k that are
-    least alike (relevance weighted 0.7, diversity 0.3), so one page does not fill every slot."""
+    """Vector search and keyword (BM25) search over the same chunks, merged by reciprocal
+    rank. Vector search finds passages that mean the same as the question; BM25 finds the
+    exact terms and figures (a "48GB" or a "Q4_K_M") that embeddings blur. The vector side
+    uses maximal marginal relevance (relevance weighted 0.7) so one page does not fill
+    every slot."""
+    from langchain_community.retrievers import BM25Retriever
     from langchain_community.vectorstores import FAISS
     store = FAISS.load_local(index_dir, embeddings(url, model), allow_dangerous_deserialization=True)
-    return store.as_retriever(search_type="mmr", search_kwargs={"k": k, "fetch_k": 4 * k, "lambda_mult": 0.7})
+    vector = store.as_retriever(search_type="mmr", search_kwargs={"k": k, "fetch_k": 4 * k, "lambda_mult": 0.7})
+    keyword = BM25Retriever.from_documents(list(store.docstore._dict.values()), k=k, preprocess_func=terms)
+    return hybrid_retriever(vector, keyword, k)
+
+
+def terms(text: str) -> list[str]:
+    """Words and numbers, lower-cased, with numbers split from units: "48GB" -> 48, gb."""
+    return re.findall(r"[a-z]+|\d+(?:\.\d+)?", text.lower())
+
+
+def fuse(rankings: list[list], k: int, rrf: int = 60) -> list:
+    """Reciprocal rank fusion: a chunk scores 1/(rrf + rank) in each list it appears in."""
+    scores, docs = {}, {}
+    for ranking in rankings:
+        for rank, doc in enumerate(ranking):
+            key = (doc.metadata.get("source"), doc.page_content)
+            scores[key] = scores.get(key, 0.0) + 1 / (rrf + rank + 1)
+            docs.setdefault(key, doc)
+    return [docs[key] for key in sorted(scores, key=scores.get, reverse=True)[:k]]
+
+
+def hybrid_retriever(vector, keyword, k: int):
+    from typing import Any
+
+    from langchain_core.retrievers import BaseRetriever
+
+    class HybridRetriever(BaseRetriever):
+        vector: Any
+        keyword: Any
+        k: int
+
+        def _get_relevant_documents(self, query, *, run_manager=None):
+            return fuse([self.vector.invoke(query), self.keyword.invoke(query)], self.k)
+
+    return HybridRetriever(vector=vector, keyword=keyword, k=k)
 
 
 def page_documents(codex_dir: Path, row: dict) -> list:
