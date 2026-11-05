@@ -23,6 +23,8 @@ A local-first assistant that researches a topic and then implements the result i
 
 ## Architecture
 
+Diagram: [architecture and roadmap in Lucidchart](https://lucid.app/lucidchart/e69a0a96-1ba7-483e-8d6d-a11ad69f0bb4/edit?invitationId=inv_44ca14c2-e204-4f9a-ab1c-3cc3aca7dd2e). It shows every component, which paths leave the PC, and the status of each stage.
+
 ```
                  Orchestrator
      request -> research -> plan -> implement -> report
