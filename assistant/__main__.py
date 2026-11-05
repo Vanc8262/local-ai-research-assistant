@@ -14,6 +14,10 @@
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
+    python -m assistant vault plan                          what the picks in vault.toml would add
+    python -m assistant vault sync [--only NAME ...]        store the picked models, nothing else
+    python -m assistant vault list|verify [NAME ...]        the stored models, and a re-hash of their files
+    python -m assistant vault scan <file>                   check one weight file before loading it
 
 Without --public a prompt counts as private and is refused by cloud tiers.
 """
@@ -34,6 +38,7 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 from .verify import verify_run
+from . import vault
 
 
 def cmd_tiers(settings, args) -> int:
@@ -112,6 +117,8 @@ def cmd_show(settings, args) -> int:
             detail = f"{record.get('tier')} + {record.get('search')} -> {record.get('n_sources')} sources"
         elif record["kind"] == "download":
             detail = f"{record.get('topic')}/{record.get('id')} {record.get('bytes')} bytes"
+        elif record["kind"] == "vault":
+            detail = f"{record.get('action')} {record.get('model')}/{record.get('file')} {record.get('bytes')} bytes"
         elif record["kind"] == "codex-index":
             detail = f"{record.get('n_files')} PDFs -> {record.get('chunks')} chunks"
         else:
@@ -242,6 +249,64 @@ def cmd_eval(settings, args) -> int:
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
 
 
+def cmd_vault(settings, args) -> int:
+    root = settings.vault_dir
+    try:
+        if args.action == "list":
+            models = vault.read_manifest(root)["models"]
+            for name, entry in sorted(models.items()):
+                size = sum(f["bytes"] for f in entry["files"].values()) / 1e9
+                where = entry.get("revision", "")[:12] or "import"
+                print(f"{name:<52} {size:>7.2f} GB  {entry['license']:<14} {where}  {entry.get('why', '')}")
+            print(f"\n{len(models)} models in {root}")
+            return 0
+        if args.action == "scan":
+            if not args.names:
+                print("vault scan needs a file")
+                return 1
+            path = Path(args.names[0])
+            kind = vault.classify(path.name)
+            problem = "refused file type (pickle, code or unknown)" if kind == "refused" else vault.scan_file(path)
+            print(f"{'REFUSED' if problem else 'ok'}: {path}" + (f" ({problem})" if problem else ""))
+            return 1 if problem else 0
+        if args.action == "verify":
+            report = vault.verify(root, names=args.names or None)
+            bad = 0
+            for name, checks in report.items():
+                problems = [c for c in checks if c.outcome != "ok"]
+                bad += len(problems)
+                print(f"{'ok' if not problems else 'PROBLEM':<8} {name} ({len(checks)} files)")
+                for check in problems:
+                    print(f"         {check.outcome:<11} {check.path}  {check.detail}")
+            print(f"\n{len(report)} models checked, {bad} problems")
+            return 1 if bad else 0
+        picks = vault.load_picks(args.picks)
+        if args.action == "plan":
+            rows = vault.plan(root, picks)
+            for name, state in rows:
+                print(f"{state:<11} {name}")
+            if not rows:
+                print(f"Nothing picked yet. Add [[model]] entries to {args.picks} after benchmarking.")
+            if any(state == "not picked" for _, state in rows):
+                print("\n'not picked' models stay until you delete them; the vault never deletes.")
+            return 0
+        log = RunLog(settings.runs_dir, task=f"vault sync into {root}")
+        results = vault.sync(root, picks, log, only=args.names or None)
+    except vault.VaultError as exc:
+        print(f"vault: {exc}")
+        return 1
+    for result in results:
+        state = "stored" if result.ok else "NOT stored (fix the problems below and rerun)"
+        print(f"{result.name}@{result.revision[:12] or 'import'} license={result.license}: {state}")
+        for check in result.files:
+            print(f"    {check.outcome:<14} {check.path}  {check.detail}")
+    if not results:
+        print("Every pick is already stored.")
+    else:
+        print(f"Run log: {log.path}")
+    return 0 if all(r.ok for r in results) else 1
+
+
 def _fmt(value, pattern: str) -> str:
     return "-" if value is None else pattern.format(value)
 
@@ -293,13 +358,20 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
+    store = sub.add_parser("vault", help="the model vault: verified local copies of the models you picked")
+    store.add_argument("action", choices=("plan", "sync", "list", "verify", "scan"))
+    store.add_argument("names", nargs="*", help="verify: model names; scan: one file")
+    store.add_argument("--picks", default="vault.toml", help="the models chosen for the vault")
+    store.add_argument("--only", nargs="+", metavar="NAME", help="sync: just these picks")
     args = parser.parse_args(argv)
+    if args.command == "vault" and args.action == "sync":
+        args.names = args.only or []
 
     settings = load_settings(args.config)
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify,
-               "eval": cmd_eval}[args.command]
+               "eval": cmd_eval, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 

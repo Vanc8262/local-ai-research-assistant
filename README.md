@@ -79,6 +79,8 @@ The code-locality check is default-deny. Anything read from a repo is tagged pri
 
 The thresholds are proposals and will be revised once Stage 0 produces real numbers.
 
+**Vault selection step.** After each round of model benchmarking (Stage 0, the planned Heretic run, any later candidate), Van picks which models and which weight files go into the [model vault](#model-vault). Only those picks are stored; benchmarking a model never adds it on its own.
+
 ## Running it (Stage 1)
 
 Services run in Docker; models run in LM Studio on the Windows host.
@@ -98,6 +100,9 @@ python -m assistant research --public -t gemini --search tavily "What is new in 
 python -m assistant research --search codex "How does QLoRA differ from LoRA?"   # cites codex pages
 python -m assistant verify <run_id>                    # check every claim's citations against its sources
 python -m assistant eval                               # Stage 2 eval: 5 questions, local and hybrid, each verified
+python -m assistant vault plan                         # what the picks in vault.toml would store
+python -m assistant vault sync                         # store exactly those picks, verified
+python -m assistant vault verify                       # re-hash every stored file
 ```
 
 Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.
@@ -130,6 +135,21 @@ Ranges cover the second seed. Research and vision show the automatic score; manu
 - Both leaders run 32K context fully on the GPU with no loss of speed.
 - LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU. Turning off "Keep Model in Memory" and turning on mmap did not change that. The figure grows during long runs, probably from the prompt cache, so long sessions should reload the model now and then.
 - Only one model fits in VRAM at a time, so a switch to the backup costs a reload.
+
+## Model vault
+
+The vault keeps permanent local copies of the open-weight models chosen to keep, so they never depend on a hosted service. It lives outside the repo at `vault_dir` (`D:/model-vault`, the 2 TB disk), in LM Studio's `<publisher>/<repo>` layout, with `manifest.json` recording each model's source, exact commit, license, the reason it was picked, and every file's size and SHA-256. Research notes: [Owning open model weights locally](https://claude.ai/artifact/4rQnYU23cB5b3ZVQFGCY8P).
+
+**Only picked models go in.** Picking is its own decision step after benchmarking: once a model's bench results are in, Van decides whether it is kept, and only then is it added to [`vault.toml`](vault.toml) with the bench run that justified it. `vault plan` shows what the picks would change and `vault sync` stores exactly those. Nothing is added automatically, and nothing is deleted: a model dropped from `vault.toml` shows as "not picked" until it is removed by hand. The file ships with no picks.
+
+What the vault enforces:
+
+- Weights are safetensors or GGUF only. Pickle formats (`.bin`, `.pt`, `.ckpt`, ...) and a repo's `.py` files can run code on load and are never downloaded. A pickle renamed to `.safetensors` fails the format check.
+- A Hugging Face pick names a full 40-character commit, and every weight file must match the SHA-256 Hugging Face publishes for it; a mismatch is deleted.
+- A GGUF chat template that reaches for Python internals (`__class__`, `__globals__`, `os.`, ..., as in CVE-2024-34359) is refused. `vault scan <file>` runs the same checks on any file before LM Studio loads it.
+- Stored files are read-only, and `vault verify` re-hashes them, flagging changed, missing, writable or unrecorded files.
+
+Still to come: backups to an external drive with restic, signing the manifest with OpenSSF `model_signing`, pointing LM Studio's models directory at the vault, and the manifest hash in each run-log step.
 
 ## Planned model: Gemma 4 E4B Heretic
 
