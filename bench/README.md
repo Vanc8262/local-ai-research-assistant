@@ -24,7 +24,7 @@ The tool, research and vision data are fictional or generated, so a model cannot
 In PowerShell, from the repo folder:
 
 ```powershell
-py -3.13 -m venv .venv
+py -3 -m venv .venv
 .venv\Scripts\Activate.ps1
 pip install -e .
 python -m pytest
