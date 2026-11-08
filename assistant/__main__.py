@@ -15,6 +15,9 @@
     python -m assistant verify <run_id>                     check a report's citations against its sources
 python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
+    python -m assistant decide probe [-t local]             which decision method works on a local tier
+    python -m assistant decide check [-t local -t local-backup] [--debias]
+                                                            score the decider on evals/decide_cases.toml
     python -m assistant vault plan                          what the picks in vault.toml would add
     python -m assistant vault sync [--only NAME ...]        store the picked models, nothing else
     python -m assistant vault list|verify [NAME ...]        the stored models, and a re-hash of their files
@@ -32,6 +35,8 @@ import httpx
 
 from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
+from .decide import METHODS, Decider, noul
+from . import decide_check
 from .evaluate import MODES, load_questions, reload_model, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
@@ -278,6 +283,52 @@ def cmd_eval(settings, args) -> int:
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
 
 
+def cmd_decide(settings, args) -> int:
+    tiers = args.tier or [settings.default_tier]
+    log = RunLog(settings.runs_dir, task=f"decide {args.action}: {', '.join(tiers)}")
+    gateway = Gateway(settings, log)
+    try:
+        if args.action == "probe":
+            return _probe(settings, gateway, log, tiers)
+        cases = decide_check.load_cases(args.cases)
+        if args.only:
+            cases = [c for c in cases if c.id in args.only]
+        results = []
+        for tier in tiers:
+            decider = Decider(settings, gateway, log, tier=tier, method=args.method, debias=args.debias)
+            try:
+                print(f"{tier}: {len(cases)} cases ...", flush=True)
+                results.append(decide_check.run_check(decider, cases, tier))
+            finally:
+                decider.close()
+    except PrivacyError as exc:
+        print(f"refused: {exc}")
+        return 1
+    finally:
+        gateway.close()
+    out = settings.runs_dir / f"decide-check-{log.run_id}.json"
+    decide_check.save(results, out)
+    print(decide_check.check_markdown(results))
+    print(f"Saved: {out} and {out.with_suffix('.md')}")
+    return 0
+
+
+def _probe(settings, gateway, log, tiers) -> int:
+    question = noul("The sky in the state is green.")
+    state = "The sky is blue today."
+    for tier in tiers:
+        for method in METHODS[1:]:
+            decider = Decider(settings, gateway, log, tier=tier, method=method)
+            try:
+                d = decider.ask(state, question, purpose=f"probe:{method}")
+            finally:
+                decider.close()
+            status = "FAILED " + d.error if d.error else (
+                f"answer {d.answer}, p(true)={d.p_true:.3f}, mass={d.mass:.2f}, {d.latency_s} s")
+            print(f"{tier:<14} {method:<10} {status}\n{'':<25} first tokens: {d.raw[:120]}")
+    return 0
+
+
 def cmd_vault(settings, args) -> int:
     root = settings.vault_dir
     try:
@@ -393,6 +444,14 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
+    dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")
+    dec.add_argument("action", choices=("probe", "check"))
+    dec.add_argument("-t", "--tier", action="append", help="local tier; repeat to compare (default: the default tier)")
+    dec.add_argument("--cases", default="evals/decide_cases.toml")
+    dec.add_argument("--only", nargs="+", metavar="ID", help="just these case ids")
+    dec.add_argument("--method", choices=METHODS, default="auto")
+    dec.add_argument("--debias", action="store_true",
+                     help="also ask with the options reversed and average, against first-option bias")
     store = sub.add_parser("vault", help="the model vault: verified local copies of the models you picked")
     store.add_argument("action", choices=("plan", "sync", "list", "verify", "scan"))
     store.add_argument("names", nargs="*", help="verify: model names; scan: one file")
@@ -406,7 +465,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 
