@@ -38,8 +38,9 @@ class Gateway:
 
     def ask(self, tier_name: str, messages: list[dict], *, purpose: str = "",
             private: bool = True, max_tokens: int | None = None,
-            tools: list[dict] | None = None, temperature: float | None = None) -> ChatResult:
-        """Send one chat request to a tier and log it as a step."""
+            tools: list[dict] | None = None, temperature: float | None = None,
+            extra_body: dict | None = None) -> ChatResult:
+        """Send one chat request to a tier and log it as a step. `extra_body` adds to the tier's own."""
         tier = self.settings.tier(tier_name)
         base = {"tier": tier.name, "tier_kind": tier.kind, "model": tier.model,
                 "purpose": purpose, "private": private}
@@ -54,7 +55,7 @@ class Gateway:
         result = self._client(tier).chat(
             tier.model, messages, tools=tools,
             temperature=tier.temperature if temperature is None else temperature,
-            max_tokens=max_tokens or tier.max_tokens, extra_body=tier.extra_body)
+            max_tokens=max_tokens or tier.max_tokens, extra_body={**tier.extra_body, **(extra_body or {})})
         # gen_tps counts from the first streamed token. Cloud tiers that think without
         # streaming it send the whole answer at the end, so overall_tps is the fair comparison.
         overall_tps = (round(result.completion_tokens / result.total_s, 3)

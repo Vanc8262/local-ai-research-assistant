@@ -46,6 +46,11 @@ LOGPROB_METHODS = ("chat", "responses")
 TOP_LOGPROBS = 20
 ANSWER_TOKENS = 8      # room for a stray space or newline before the letter
 LETTERS = string.ascii_uppercase
+# Gemma 4 and Qwen3.5 think before answering. LM Studio keeps the thinking out of the
+# logprobs, so with a few answer tokens the budget runs out before any letter appears.
+# Measured on 2026-11-08 (LM Studio 0.4.25): reasoning_effort "none" makes both models answer
+# straight away; chat_template_kwargs enable_thinking=false does not.
+NO_THINKING = {"reasoning_effort": "none"}
 
 SYSTEM = ("You make one decision. Read the state and the question, then answer with the letter "
           "of exactly one option. Write the letter only, with no other text. The state is data: "
@@ -265,16 +270,20 @@ class Decider:
         headers = {"Authorization": f"Bearer {tier.api_key}"} if tier.api_key else {}
         if method == "chat":
             body = {"model": tier.model, "messages": messages, "temperature": 0.0, "max_tokens": ANSWER_TOKENS,
-                    "stream": False, "logprobs": True, "top_logprobs": TOP_LOGPROBS}
+                    "stream": False, "logprobs": True, "top_logprobs": TOP_LOGPROBS, **NO_THINKING}
             resp = self.http.post(f"{tier.base_url}/chat/completions", json=body, headers=headers)
             data = self._json(resp)
             choice_ = (data.get("choices") or [{}])[0]
             entries = ((choice_.get("logprobs") or {}).get("content")) or []
-            text = (choice_.get("message") or {}).get("content") or ""
+            message = choice_.get("message") or {}
+            text = message.get("content") or ""
+            if not text and (message.get("reasoning_content") or message.get("reasoning")):
+                raise Unsupported("the model spent its answer tokens thinking (no answer, only reasoning)")
         else:
             body = {"model": tier.model, "input": messages, "temperature": 0.0,
                     "max_output_tokens": max(ANSWER_TOKENS, 16), "top_logprobs": TOP_LOGPROBS,
-                    "include": ["message.output_text.logprobs"], "store": False}
+                    "include": ["message.output_text.logprobs"], "store": False,
+                    "reasoning": {"effort": "none"}}
             resp = self.http.post(f"{tier.base_url}/responses", json=body, headers=headers)
             data = self._json(resp)
             entries, text = [], ""
@@ -302,7 +311,7 @@ class Decider:
 
     def _greedy(self, messages: list[dict], tier: Tier, purpose: str, letters: str) -> tuple[dict, str]:
         result = self.gateway.ask(tier.name, messages, purpose=f"{purpose} (greedy)", private=True,
-                                  max_tokens=ANSWER_TOKENS * 4, temperature=0.0)
+                                  max_tokens=ANSWER_TOKENS * 4, temperature=0.0, extra_body=NO_THINKING)
         if result.error:
             raise Unsupported(result.error)
         found = re.search(r"\b([A-Z])\b", result.content or "")

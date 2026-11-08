@@ -67,6 +67,7 @@ def test_chat_logprobs_give_probabilities_per_option(tmp_path):
     assert d.mass == pytest.approx(0.9, abs=1e-3)
     assert 0 < d.confidence < 1
     assert bodies[0]["logprobs"] is True and bodies[0]["temperature"] == 0.0 and bodies[0]["stream"] is False
+    assert bodies[0]["reasoning_effort"] == "none"
     step = [r for r in read_run(log.path) if r.get("kind") == "decide"][0]
     assert step["private"] is True and step["method"] == "chat" and step["answer"] == "technical"
 
@@ -103,6 +104,25 @@ def test_auto_falls_back_to_responses_then_greedy(tmp_path):
     hits.clear()
     decider.ask("s", noul("x"))                 # the working method is remembered
     assert hits == ["/v1/chat/completions"]
+
+
+def test_greedy_also_turns_thinking_off(tmp_path):
+    bodies = []
+
+    def handler(request):
+        bodies.append(json.loads(request.content))
+        return httpx.Response(200, content=fake_model.sse({"content": "A"}))
+
+    decider, _ = make(tmp_path, handler, method="greedy")
+    assert decider.ask("s", noul("x")).answer == "true"
+    assert bodies[0]["reasoning_effort"] == "none"
+
+
+def test_thinking_only_reply_says_so(tmp_path):
+    reply = {"choices": [{"message": {"content": "", "reasoning_content": "The user wants..."},
+                          "finish_reason": "length"}]}
+    decider, _ = make(tmp_path, lambda r: httpx.Response(200, json=reply), method="chat")
+    assert "thinking" in decider.ask("s", noul("x")).error
 
 
 def test_responses_logprobs_are_read(tmp_path):
