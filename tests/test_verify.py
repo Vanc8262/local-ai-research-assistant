@@ -266,3 +266,50 @@ def test_short_sources_are_passed_whole_and_long_ones_keep_their_tail():
     assert best_passages("adapters at every network layer", chunk) == [chunk]
     page = "filler text here. " * 200 + "The tail says adapters at every network layer."
     assert any(p.endswith("every network layer.") for p in best_passages("adapters every network layer", page))
+
+
+class FakeDecider:
+    """Says "true" with the given probability; error makes every decision fail."""
+
+    def __init__(self, p_true: float = 0.95, error: str = "") -> None:
+        self.p_true, self.error, self.asked = p_true, error, []
+
+    def ask(self, state, question, **kwargs):
+        from assistant.decide import Decision, confidence_of
+        self.asked.append((state, question.instructions))
+        probs = {"true": self.p_true, "false": 1 - self.p_true}
+        return Decision(kind="noul", answer="" if self.error else max(probs, key=probs.get), probabilities=probs,
+                        confidence=0.0 if self.error else confidence_of(probs), mass=1.0, method="chat",
+                        latency_s=0.1, tier="local", error=self.error)
+
+
+def verify_with(tmp_path, decider):
+    run_dir, prompts = make_run(tmp_path), []
+    settings = settings_for(tmp_path)
+    log = RunLog(settings.runs_dir)
+    gateway = Gateway(settings, log, transport=transport(prompts))
+    result = verify_run(run_dir, gateway, log, transport=transport(prompts), decider=decider)
+    gateway.close()
+    return result
+
+
+def test_the_decider_drops_a_pass_it_doubts_to_partial(tmp_path):
+    decider = FakeDecider(p_true=0.3)
+    result = verify_with(tmp_path, decider)
+    assert result.claims[0].verdict == "partial"
+    assert result.claims[0].checks[0].reason.startswith("the decider doubts it (p 0.30")
+    assert result.summary()["doubted"] >= 1
+    assert "The passages support this claim: Python 3.15 adds lazy imports" in decider.asked[0][1]
+    assert "lazy keyword defers loading" in decider.asked[0][0]
+
+
+def test_a_confident_decider_keeps_the_pass(tmp_path):
+    result = verify_with(tmp_path, FakeDecider(p_true=0.97))
+    assert result.claims[0].verdict == "supported" and result.claims[0].checks[0].decider_p == 0.97
+    assert result.summary()["doubted"] == 0
+
+
+def test_a_failing_decider_is_counted_not_trusted_silently(tmp_path):
+    result = verify_with(tmp_path, FakeDecider(error="no logprobs"))
+    assert result.claims[0].verdict == "supported"
+    assert result.summary()["decider_errors"] >= 1

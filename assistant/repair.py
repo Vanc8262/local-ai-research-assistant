@@ -105,7 +105,7 @@ class _CheckedGateway:
 
 
 def repair_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None, private: bool = True,
-               transport=None, reload_every: int = 0, reloader=None) -> Repair:
+               transport=None, reload_every: int = 0, reloader=None, decider=None) -> Repair:
     run_dir = Path(run_dir)
     tier = tier or gateway.settings.default_tier
     report_path = run_dir / "report.md"
@@ -115,7 +115,7 @@ def repair_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
     model = _ReloadingGateway(_CheckedGateway(gateway, reloader), reload_every, reloader)
     judged: dict = {}   # verdicts given while looking for a better source, so they are not asked twice
     check = lambda: verify_run(run_dir, model, log, tier=tier, private=private, transport=transport,
-                               known={**known_checks(run_dir), **judged})
+                               known={**known_checks(run_dir), **judged}, decider=decider)
     try:
         checked = check()
         before = checked.summary()
@@ -123,7 +123,7 @@ def repair_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
                               headers={"User-Agent": "local-ai-research-assistant/0.1 (citation check)"})
         try:
             report, changes = _first_pass(report_path.read_text(encoding="utf-8"), checked, run_dir, client,
-                                          model, tier, private, judged)
+                                          model, tier, private, judged, decider)
         finally:
             client.close()
         report_path.write_text(_tidy(report), encoding="utf-8")
@@ -155,7 +155,7 @@ def _original(run_dir: Path, name: str) -> Path:
 
 
 def _first_pass(report: str, checked: Verification, run_dir: Path, client, model, tier: str,
-                private: bool, judged: dict) -> tuple[str, list[Change]]:
+                private: bool, judged: dict, decider=None) -> tuple[str, list[Change]]:
     sources = {str(s.get("index") or n): s for n, s in
                enumerate(json.loads((run_dir / "sources.json").read_text(encoding="utf-8")), start=1)}
     changes = []
@@ -169,16 +169,16 @@ def _first_pass(report: str, checked: Verification, run_dir: Path, client, model
         if claim.verdict in ("supported", "unchecked"):
             continue
         claim.raw = raw
-        change = _fix(claim, sources, run_dir, client, model, tier, private, judged)
+        change = _fix(claim, sources, run_dir, client, model, tier, private, judged, decider)
         changes.append(change)
         report = _remove(report, raw) if change.action == "removed" else report.replace(raw, change.after, 1)
     return report, changes
 
 
 def _fix(claim: Claim, sources: dict, run_dir: Path, client, model, tier: str, private: bool,
-         judged: dict) -> Change:
+         judged: dict, decider=None) -> Change:
     for index in _likely_sources(claim.text, sources, client, run_dir, skip=claim.citations):
-        check = _check(claim, index, sources, client, run_dir, model, tier, private)
+        check = _check(claim, index, sources, client, run_dir, model, tier, private, decider)
         if _quote_backs(check.quote, claim.text):
             judged[_check_key(claim.text, index)] = check
         if check.verdict == "supported" and _quote_backs(check.quote, claim.text):

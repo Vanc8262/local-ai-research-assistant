@@ -10,12 +10,14 @@ expect = [["3.15"], ["lazy import", "lazy keyword"], ["UTF-8"]]
 
 [[question]]
 id = "lora-vs-qlora"
+codex = true
 topic = "ai-llm"
 text = "How does QLoRA reduce memory use compared with LoRA when fine-tuning large language models?"
 expect = [["4-bit", "4 bit"], ["NF4", "NormalFloat"], ["double quantization"], ["paged optimizer"]]
 
 [[question]]
 id = "aws-pillars"
+codex = true
 topic = "cloud"
 text = "What are the pillars of the AWS Well-Architected Framework and what does each one cover?"
 expect = [["operational excellence"], ["security"], ["reliability"], ["performance efficiency"],
@@ -29,6 +31,7 @@ expect = [["Q4_K_M"], ["Q8_0"], ["k-quant", "k quant", "K-quants"], ["perplexity
 
 [[question]]
 id = "self-rag"
+codex = true
 topic = "rag"
 text = "How does Self-RAG differ from standard retrieval-augmented generation?"
 expect = [["reflection token"], ["retriev"], ["critique", "critic"]]

@@ -2,9 +2,12 @@
 the GPU fields are simply absent."""
 from __future__ import annotations
 
+import csv
+import os
 import shutil
 import subprocess
 import threading
+import time
 
 import psutil
 
@@ -63,6 +66,59 @@ def top_processes(count: int = 8) -> list[dict]:
         except (psutil.Error, AttributeError, TypeError):
             continue
     return sorted(rows, key=lambda row: row["rss_mb"], reverse=True)[:count]
+
+
+class Timeline:
+    """Writes a memory sample every `interval_s` to a CSV file, labelled with what was running.
+
+    Set `label` as the work moves on; `low` is the lowest free RAM seen since the last
+    `reset_low()`, so a caller can record the worst moment of each step."""
+
+    FIELDS = ("at_s", "label", "ram_available_mb", "ram_used_mb", "swap_used_mb", "llama_server_mb", "top")
+
+    def __init__(self, path, interval_s: float = 15.0, top: int = 4) -> None:
+        self.path, self.interval_s, self.top = path, interval_s, top
+        self.label, self.low, self.lowest = "", None, None   # lowest: (mb, label) over the whole run
+        self._start = time.perf_counter()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+
+    def reset_low(self) -> None:
+        """Start a new step: sample now, so even a step shorter than the interval has a low."""
+        self.low = None
+        self.sample()
+
+    def sample(self) -> dict:
+        ram = ram_snapshot()
+        procs = top_processes(self.top + 4)
+        row = {"at_s": round(time.perf_counter() - self._start), "label": self.label, **ram,
+               "llama_server_mb": sum(p["rss_mb"] for p in procs if "llama" in (p["name"] or "").lower()),
+               "top": "; ".join(f"{p['name']} {p['rss_mb']}" for p in procs[:self.top])}
+        free = ram["ram_available_mb"]
+        self.low = free if self.low is None else min(self.low, free)
+        if self.lowest is None or free < self.lowest[0]:
+            self.lowest = (free, self.label)
+        new = not os.path.exists(self.path)
+        with open(self.path, "a", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.FIELDS, extrasaction="ignore")
+            if new:
+                writer.writeheader()
+            writer.writerow(row)
+        return row
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_s):
+            self.sample()
+
+    def __enter__(self) -> "Timeline":
+        self.sample()
+        self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        self._thread.join(timeout=5)
+        self.sample()
 
 
 class PeakSampler:
