@@ -141,6 +141,18 @@ Ranges cover the second seed. Research and vision show the automatic score; manu
 - LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU. Turning off "Keep Model in Memory" and turning on mmap did not change that. The figure grows during long runs, probably from the prompt cache, so long sessions should reload the model now and then.
 - Only one model fits in VRAM at a time, so a switch to the backup costs a reload.
 
+## Local decisions (option scoring)
+
+Some steps need a decision, not text: which command a request needs, which tier runs a step, whether a passage supports a claim, whether a shell command is destructive. `assistant/decide.py` answers these the way a "System One" model such as TypeSafe's Jev does, but on the local model already loaded in LM Studio, so it costs nothing and adds no RAM. Each question has fixed options shown under letters; the decider reads the probability the model gives each letter for its first token instead of parsing generated text. Question types follow Jev's: `choice`, `score` and `noul` (true or false).
+
+```powershell
+.\.venv\Scripts\python.exe -m assistant decide probe -t local -t local-backup   # which method works on each tier
+.\.venv\Scripts\python.exe -m assistant decide check -t local -t local-backup   # score the cases in evals/decide_cases.toml
+.\.venv\Scripts\python.exe -m assistant decide check -t local --debias          # also ask with the options reversed
+```
+
+Decisions run on local tiers only and are logged as `decide` steps. If LM Studio returns no token probabilities, the decider falls back to the letter the model writes at temperature 0, which gives a decision but no probability. The probabilities are not calibrated; thresholds come from the check's "confidence when right / when wrong" lines. The cases follow the use cases ranked on 2026-11-08: request routing, model routing, eval grading, bulk labelling, agent control and map-reduce features first, guardrails second.
+
 ## Model vault
 
 The vault keeps permanent local copies of the open-weight models chosen to keep, so they never depend on a hosted service. It lives outside the repo at `vault_dir` (`D:/model-vault`, the 2 TB disk), in LM Studio's `<publisher>/<repo>` layout, with `manifest.json` recording each model's source, exact commit, license, the reason it was picked, and every file's size and SHA-256. Research notes: [Owning open model weights locally](https://claude.ai/artifact/4rQnYU23cB5b3ZVQFGCY8P).
