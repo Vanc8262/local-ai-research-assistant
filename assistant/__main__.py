@@ -236,10 +236,13 @@ def cmd_verify(settings, args) -> int:
 
 def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload_every: int = 0) -> int:
     gateway = Gateway(settings, log)
+    decider = Decider(settings, gateway, log, tier=tier) if private else None   # decisions are local only
     try:
         result = verify_run(run_dir, gateway, log, tier=tier, private=private, reload_every=reload_every,
-                            reloader=lambda: reload_model(settings, tier))
+                            reloader=lambda: reload_model(settings, tier), decider=decider)
     finally:
+        if decider:
+            decider.close()
         gateway.close()
     print((run_dir / "verification.md").read_text(encoding="utf-8"))
     summary = result.summary()
@@ -258,13 +261,15 @@ def cmd_repair(settings, args) -> int:
 
 def _repair(settings, run_dir: Path, log: RunLog, *, tier, reload_every: int = 0) -> int:
     gateway = Gateway(settings, log)
+    decider = Decider(settings, gateway, log, tier=tier)
     try:
         result = repair_run(run_dir, gateway, log, tier=tier, reload_every=reload_every,
-                            reloader=lambda: reload_model(settings, tier))
+                            reloader=lambda: reload_model(settings, tier), decider=decider)
     except RepairError as exc:
         print(f"repair stopped, report unchanged: {exc}")
         return 1
     finally:
+        decider.close()
         gateway.close()
     print((run_dir / "repair.md").read_text(encoding="utf-8"))
     print(f"Saved: {run_dir / 'report.md'} (original: report.original.md)")
@@ -277,7 +282,7 @@ def cmd_eval(settings, args) -> int:
     if args.only:
         questions = [q for q in questions if q.id in args.only]
     out_dir, rows = run_eval(settings, questions, args.mode or list(MODES), verify_tier=args.verify_tier,
-                              reload=not args.no_reload)
+                              reload=not args.no_reload, runs=args.runs)
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
@@ -442,6 +447,7 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
+    evaluate.add_argument("--runs", type=int, default=2, help="runs per question and mode (default 2)")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
     dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")

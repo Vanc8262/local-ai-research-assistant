@@ -1,5 +1,6 @@
 import csv
 import json
+import math
 import sys
 from pathlib import Path
 
@@ -34,8 +35,19 @@ def settings_for(tmp_path) -> Settings:
     return settings
 
 
+def decider_reply(request, p_true: float = 0.95):
+    """The decider's logprob request: a noul whose option A is "true"."""
+    weights = {"A": p_true, "B": 1 - p_true}
+    best = max(weights, key=weights.get)
+    entry = {"token": best, "logprob": math.log(weights[best]),
+             "top_logprobs": [{"token": k, "logprob": math.log(v)} for k, v in weights.items()]}
+    return httpx.Response(200, json={"choices": [{"message": {"content": best}, "logprobs": {"content": [entry]}}]})
+
+
 def transport(seen: list):
     def handler(request):
+        if request.url.host == "local" and json.loads(request.content).get("logprobs"):
+            return decider_reply(request)
         if request.url.host in ("local", "cloud"):
             seen.append(request.url.host)
             prompt = json.loads(request.content)["messages"][0]["content"]
@@ -52,13 +64,13 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
     script = tmp_path / "fake_ldr.py"
     script.write_text(FAKE_LDR, encoding="utf-8")
     seen = []
-    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"], ["UTF-8"]])
+    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"]])
     out_dir, rows = run_eval(settings_for(tmp_path), [question], ["local", "hybrid"],
-                             runner=[sys.executable, str(script)], transport=transport(seen))
+                             runner=[sys.executable, str(script)], transport=transport(seen), runs=1)
 
     assert [(r["mode"], r["outcome"], r["coverage"], r["accuracy"], r["gate"]) for r in rows] == [
         ("local", "ok", 1.0, 1.0, "pass"), ("hybrid", "ok", 1.0, 1.0, "pass")]
-    assert rows[0]["facts"] == round(2 / 3, 3)
+    assert rows[0]["facts"] == 1.0
     # research went to the mode's tier; the citation check always ran locally
     assert seen == ["local", "local", "cloud", "local"]
     assert rows[0]["local_tokens"] > 0 and rows[0]["cloud_tokens"] == 0
@@ -90,7 +102,7 @@ def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):
     questions = [Question(id="a", text="a"), Question(id="b", text="b")]
     run_eval(settings, questions, ["hybrid"], reload=True, runner=["never-run"], transport=transport([]),
              reloader=lambda s, tier: reloads.append(tier))
-    assert reloads == [None, None]
+    assert reloads == [None, None, None, None]   # before each run of each question
 
     reload_model(settings, run=lambda cmd, **kw: calls.append(cmd[1:]))
     assert calls == [["unload", "--all"], ["load", "gemma-4-e4b-it-qat", "--context-length", "32768",
@@ -103,6 +115,8 @@ FLAGGED_LDR = FAKE_LDR.replace('"Python 3.15 adds lazy imports [1]."',
 
 def flagged_transport():
     def handler(request):
+        if request.url.host == "local" and json.loads(request.content).get("logprobs"):
+            return decider_reply(request)
         if request.url.host == "local":
             prompt = json.loads(request.content)["messages"][0]["content"]
             if "failed a citation check" in prompt:
@@ -124,10 +138,38 @@ def test_eval_scores_the_repaired_report_and_fails_one_that_lost_too_much(tmp_pa
     script.write_text(FLAGGED_LDR, encoding="utf-8")
     question = Question(id="py", text="What is new?", expect=[["flying cars"], ["lazy imports"]])
     out_dir, (row,) = run_eval(settings_for(tmp_path), [question], ["local"],
-                               runner=[sys.executable, str(script)], transport=flagged_transport())
+                               runner=[sys.executable, str(script)], transport=flagged_transport(), runs=1)
 
     assert (row["accuracy_before"], row["accuracy"]) == (0.5, 1.0)
     assert (row["claims_before"], row["claims"], row["removed"]) == (2, 1, 1)
     assert (row["facts_before"], row["facts"]) == (1.0, 0.5)
     assert row["removed_share"] == 0.5 and row["gate"] == "fail"   # clean, but half the report is gone
     assert "mean claims removed 50%" in (out_dir / "summary.md").read_text(encoding="utf-8")
+
+
+def test_each_question_runs_twice_codex_only_where_marked_and_ram_is_logged(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_GEMINI_KEY", "gemini-test-key")
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    questions = [Question(id="plain", text="q", expect=[["lazy imports"]]),
+                 Question(id="paper", text="q", expect=[["lazy imports"]], codex=True)]
+    out_dir, rows = run_eval(settings_for(tmp_path), questions, ["local", "codex"],
+                             runner=[sys.executable, str(script)], transport=transport([]), ram_interval_s=60)
+    assert [(r["question"], r["mode"], r["run"]) for r in rows] == [
+        ("plain", "local", 1), ("plain", "local", 2),
+        ("paper", "local", 1), ("paper", "codex", 1), ("paper", "local", 2), ("paper", "codex", 2)]
+    assert rows[0]["gate"] == "pass" and rows[0]["min_free_ram_mb"] > 0
+    assert rows[3]["outcome"] == "not_run"     # no codex index in the test settings
+    ram = (out_dir / "ram.csv").read_text(encoding="utf-8").splitlines()
+    assert ram[0].startswith("at_s,label,ram_available_mb") and len(ram) >= 3
+    summary = (out_dir / "summary.md").read_text(encoding="utf-8")
+    assert "Questions that passed on every run: 2 of 2." in summary and "Lowest free RAM" in summary
+
+
+def test_a_clean_report_missing_expected_facts_fails_the_gate(tmp_path):
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    question = Question(id="py", text="q", expect=[["lazy imports"], ["UTF-8"]])   # half the facts
+    _, (row,) = run_eval(settings_for(tmp_path), [question], ["local"],
+                         runner=[sys.executable, str(script)], transport=transport([]), runs=1)
+    assert (row["coverage"], row["accuracy"], row["facts"], row["gate"]) == (1.0, 1.0, 0.5, "fail")

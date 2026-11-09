@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** Stage 2: all 10 reports in the latest eval pass the citation gate after repair ([results](results/stage2_eval_2026-11-05b.md)). Stage 0 chose Gemma 4 E4B QAT as the default local model and Qwen3.5 9B as the backup (see [Stage 0 results](#stage-0-results)). See [bench/README.md](bench/README.md) to run the harness.
+**Status:** Stage 2: in the latest eval, with two runs per question and a stricter gate, 7 of 10 local, 8 of 10 hybrid and 3 of 6 codex reports pass ([results](results/stage2_eval_2026-11-08.md)). Stage 0 chose Gemma 4 E4B QAT as the default local model and Qwen3.5 9B as the backup (see [Stage 0 results](#stage-0-results)). See [bench/README.md](bench/README.md) to run the harness.
 
 ## Goals
 
@@ -102,7 +102,7 @@ python -m assistant research --public -t gemini --search tavily "What is new in 
 python -m assistant research --search codex "How does QLoRA differ from LoRA?"   # cites codex pages
 python -m assistant verify <run_id>                    # check every claim's citations against its sources
 python -m assistant repair <run_id>                    # fix or remove the claims that failed verify
-python -m assistant eval                               # Stage 2 eval: 5 questions, local and hybrid, verified and repaired
+python -m assistant eval [--runs 2]                    # Stage 2 eval: 5 questions x 2 runs; local, hybrid and codex; verified and repaired
 python -m assistant vault plan                         # what the picks in vault.toml would store
 python -m assistant vault sync                         # store exactly those picks, verified
 python -m assistant vault verify                       # re-hash every stored file
@@ -118,7 +118,9 @@ Tools that make their own model calls, such as Local Deep Research in Stage 2, p
 
 `verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported). The command exits with status 1 while any claim is uncited or unsupported, or cites a missing source, so it can gate a script.
 
-`repair` handles each claim that failed `verify`. If another likely source supports the claim as written, the claim cites that source instead. Otherwise a cited claim may be shortened to the part its sources support, and a claim that cannot be saved is removed. The report is then checked again, and whatever still fails is removed. A rewrite may only delete words, because a source can be the one that is wrong: an old page counting five AWS pillars must not turn a correct "six" into a wrong "five" that passes the check. The original is kept as `report.original.md`, and `repair.md` lists every change. If the model cannot answer, the repair reloads it and tries once more, then stops and puts the report back. Removing claims always raises the citation scores, so `eval` also records the claims removed and the expected facts before and after, and a report that lost more than a quarter of its claims fails the gate. Passing shows that the checker accepts what is left, not that every sentence is true: its model is sometimes generous, and a hand review of the changes is still worthwhile.
+`repair` handles each claim that failed `verify`. If another likely source supports the claim as written, the claim cites that source instead. Otherwise a cited claim may be shortened to the part its sources support, and a claim that cannot be saved is removed. The report is then checked again, and whatever still fails is removed. A rewrite may only delete words, because a source can be the one that is wrong: an old page counting five AWS pillars must not turn a correct "six" into a wrong "five" that passes the check. The original is kept as `report.original.md`, and `repair.md` lists every change. If the model cannot answer, the repair reloads it and tries once more, then stops and puts the report back. Removing claims always raises the citation scores, so `eval` also records the claims removed and the expected facts before and after, and a report fails the gate if repair removed more than 15% of its claims or it has fewer than 75% of the question's expected facts. Passing shows that the checker accepts what is left, not that every sentence is true: its model is sometimes generous, and a hand review of the changes is still worthwhile.
+
+`verify` also asks the decider (`assistant/decide.py`, the same local model) whether the passages support each claim the model passed. A pass it doubts (it answers false, or its confidence is below 0.5) drops to partial, and `verification.md` counts these. In a hand test it caught 3 of 5 known weak passes and kept both good ones. `eval` runs every question twice, and also in codex mode for the questions marked `codex = true`. It writes free RAM and the top processes every 15 seconds to `ram.csv`, with the lowest point in `summary.md`.
 
 ## Stage 0 results
 

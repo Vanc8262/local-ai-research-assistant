@@ -46,6 +46,10 @@ MAX_LABEL_CHARS = 100
 SNIPPET_JOIN = "\n[search snippet] "
 
 VERDICTS = ("supported", "partial", "unsupported", "unchecked")
+DOUBTED = "the decider doubts it"
+# shortcut: from 36 labelled decide cases (Gemma's confidence 0.93 when right, 0.33 when wrong);
+# re-check against hand-labelled claims once the eval has some.
+MIN_DECIDER_CONFIDENCE = 0.5
 NO_SOURCE = "no source has this number"
 
 PROMPT = """You check citations in a research report.
@@ -82,6 +86,8 @@ class Check:
     quote: str = ""
     reason: str = ""
     combined: bool = False    # one check of all the claim's sources together
+    decider_p: float | None = None   # the decider's probability that the passages support the claim
+    decider_error: str = ""
 
 
 @dataclass
@@ -131,6 +137,8 @@ class Verification:
             "citation_accuracy": round(counts["supported"] / checked, 3) if checked else None,
             "dangling_citations": sum(check.reason == NO_SOURCE for claim in self.claims
                                       for check in claim.checks),
+            "doubted": sum(check.reason.startswith(DOUBTED) for claim in self.claims for check in claim.checks),
+            "decider_errors": sum(bool(check.decider_error) for claim in self.claims for check in claim.checks),
         }
 
 
@@ -329,7 +337,9 @@ def _check_key(text: str, index: str) -> tuple[str, str]:
 
 def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None,
                private: bool = True, transport=None, reload_every: int = 0,
-               reloader=None, known: dict | None = None) -> Verification:
+               reloader=None, known: dict | None = None, decider=None) -> Verification:
+    """`decider` (assistant.decide.Decider) second-guesses every "supported" verdict, and a
+    claim it doubts drops to "partial". Without one, the support check is the model's alone."""
     run_dir = Path(run_dir)
     known = known or {}
     report = (run_dir / "report.md").read_text(encoding="utf-8")
@@ -344,11 +354,13 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
         for claim in claims:
             for index in claim.citations:
                 claim.checks.append(known.get(_check_key(claim.text, index))
-                                    or _check(claim, index, sources, client, run_dir, gateway, tier, private))
+                                    or _check(claim, index, sources, client, run_dir, gateway, tier, private,
+                                              decider))
             verdicts = {check.verdict for check in claim.checks}
             if len(claim.checks) > 1 and "supported" not in verdicts and "partial" in verdicts:
                 claim.checks.append(known.get(_check_key(claim.text, "combined"))
-                                    or _combined_check(claim, sources, client, run_dir, gateway, tier, private))
+                                    or _combined_check(claim, sources, client, run_dir, gateway, tier, private,
+                                                       decider))
     finally:
         client.close()
 
@@ -363,7 +375,7 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
 
 
 def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gateway: Gateway,
-           tier: str, private: bool) -> Check:
+           tier: str, private: bool, decider=None) -> Check:
     source = sources.get(index)
     if source is None:
         return Check(index=index, verdict="unsupported", reason=NO_SOURCE)
@@ -396,6 +408,26 @@ def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gatew
     if check.verdict == "supported" and check.missing_facts:
         check.verdict = "partial"
         check.reason = f"source does not mention {', '.join(check.missing_facts)}; " + check.reason
+    return _second_opinion(check, claim, passages, decider)
+
+
+def _second_opinion(check: Check, claim: Claim, passages: list[str], decider) -> Check:
+    """Ask the decider whether the passages support the claim, and drop a "supported" it
+    doubts to "partial". A decider that cannot answer leaves the verdict as it was and is
+    counted in the summary, so a broken decider shows instead of passing everything."""
+    if decider is None or check.verdict != "supported":
+        return check
+    from .decide import noul   # decide imports verify's neighbours; keep the import here
+    state = "Passages from the cited source:\n" + "\n---\n".join(passages)
+    decision = decider.ask(state, noul(f"The passages support this claim: {claim.text}"), purpose="verify")
+    if decision.error:
+        check.decider_error = decision.error[:200]
+        return check
+    check.decider_p = decision.p_true
+    if decision.answer != "true" or decision.confidence < MIN_DECIDER_CONFIDENCE:
+        check.verdict = "partial"
+        check.reason = (f"{DOUBTED} (p {decision.p_true:.2f}, confidence {decision.confidence:.2f}); "
+                        + check.reason)
     return check
 
 
@@ -413,7 +445,7 @@ def _source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, 
 
 
 def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway, tier: str,
-                    private: bool) -> Check:
+                    private: bool, decider=None) -> Check:
     """One check of all the claim's sources together, for claims each source supports in part,
     such as a sentence listing several features drawn from different pages."""
     texts, blocks = {}, []
@@ -461,7 +493,7 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
         elif check.missing_facts:
             check.verdict = "partial"
             check.reason = f"no source mentions {', '.join(check.missing_facts)}; " + check.reason
-    return check
+    return _second_opinion(check, claim, blocks, decider)
 
 
 def _json_object(answer: str) -> dict:
@@ -482,7 +514,9 @@ def verification_markdown(result: Verification) -> str:
              f"- Citation accuracy: {pct(s['citation_accuracy'])} "
              f"({s['supported']} supported, {s['partial']} partial, {s['unsupported']} unsupported, "
              f"{s['unchecked']} unchecked)",
-             f"- Citations to a missing source: {s['dangling_citations']}", "", "## Claims that need attention", ""]
+             f"- Citations to a missing source: {s['dangling_citations']}",
+             f"- Passes the decider doubted: {s['doubted']} (decider errors: {s['decider_errors']})", "",
+             "## Claims that need attention", ""]
     flagged = [c for c in result.claims
                if c.verdict != "supported" or any(k.reason == NO_SOURCE for k in c.checks)
                or any(k.verdict == "unsupported" for k in c.checks)]   # a source contradicts it
