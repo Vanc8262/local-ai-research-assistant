@@ -85,7 +85,7 @@ The thresholds are proposals and will be revised once Stage 0 produces real numb
 
 ## Running it (Stage 1)
 
-Services run in Docker; models run in LM Studio on the Windows host.
+Services run in Docker; models run on the Windows host through llama-swap (see [Model server](#model-server)), or LM Studio with `model_server = "lmstudio"`.
 
 ```powershell
 docker compose up -d                                   # SearXNG on http://127.0.0.1:8888
@@ -96,7 +96,7 @@ python -m assistant search "llama.cpp KV cache quantization"
 python -m assistant show <run_id>                      # the logged steps of a run
 python -m assistant proxy                              # tiers as an OpenAI endpoint on http://127.0.0.1:8765/v1
 python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder
-python -m assistant codex index                        # embed the codex PDFs (LM Studio, nomic-embed-text)
+python -m assistant codex index                        # embed the codex PDFs (nomic-embed-text)
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
 python -m assistant research --search codex "How does QLoRA differ from LoRA?"   # cites codex pages
@@ -140,8 +140,27 @@ Ranges cover the second seed. Research and vision show the automatic score; manu
 
 **Limits found:**
 - Both leaders run 32K context fully on the GPU with no loss of speed.
-- LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU. Turning off "Keep Model in Memory" and turning on mmap did not change that. The figure grows during long runs, probably from the prompt cache, so long sessions should reload the model now and then.
+- LM Studio's `llama-server` holds 5-7 GB of system RAM per loaded model, even with every layer on the GPU, and grows during long runs. The cause turned out to be its 8 GiB prompt cache; see [Model server](#model-server).
 - Only one model fits in VRAM at a time, so a switch to the backup costs a reload.
+
+## Model server
+
+The eval and the gateway reach the local models through llama-swap on `127.0.0.1:1234`, running the `llama-server` that ships with LM Studio, with the flags in [`services/llama-swap/config.yaml`](services/llama-swap/config.yaml). LM Studio stays installed for chat and model downloads.
+
+```powershell
+lms server stop                                        # free port 1234
+powershell -ExecutionPolicy Bypass -File scripts\start_llama_swap.ps1   # needs: winget install mostlygeek.llama-swap
+```
+
+Why: under LM Studio, `llama-server` grows from about 6 to 12 GB during a long verification, because LM Studio leaves the 8 GiB host prompt cache on and runs 4 slots. Free RAM fell to 86 MB in the Nov 8 eval. Measured on 2026-11-11, re-verifying the same report (50 model calls, Gemma 4 E4B, 32K):
+
+| Server | llama-server peak (private) | Lowest free RAM | Speed |
+|---|---|---|---|
+| LM Studio, defaults | 12.1 GB | 324 MB | 70 tok/s |
+| LM Studio, Keep Model in Memory off | 12.1 GB | 1.6 GB | 70 tok/s |
+| llama-swap, `-cram 0 -np 1 -lm mmap --no-mmproj` | 4.6 GB | 7.4 GB | 77 tok/s |
+
+All three gave the same verdicts. Gemma's lazy embeddings flag (`-lzm on`) saved nothing and cost speed, so it is off. Under llama-swap, `reload_model` asks it to unload, and the next request loads the model fresh. Gemma and the embedding model stay loaded together. Loading Qwen unloads them. Qwen has not been measured under llama-swap yet. Set `model_server = "lmstudio"` in `assistant.toml` to go back to LM Studio.
 
 ## Local decisions (option scoring)
 

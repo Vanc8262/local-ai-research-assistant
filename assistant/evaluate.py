@@ -27,6 +27,8 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from bench.sysmon import Timeline
 
 from .config import Settings
@@ -74,17 +76,33 @@ def load_questions(path: str | Path) -> list[Question]:
     return [Question(**entry) for entry in raw.get("question", [])]
 
 
-def reload_model(settings: Settings, tier_name: str | None = None, *, run=subprocess.run) -> None:
-    """Unload everything in LM Studio and load the tier's model fresh at the research context.
+def reload_model(settings: Settings, tier_name: str | None = None, *, run=subprocess.run, post=None) -> None:
+    """Drop the loaded model so the next call starts from a fresh load.
 
-    llama-server's host memory grows through a long session (8.5 GB in 35 minutes during the
-    first eval, probably the prompt cache), and 16 GB of RAM cannot carry that for a full eval.
+    LM Studio: unload everything, then `lms load` the tier's model at the research context.
+    llama-swap: ask it to unload; it starts the model again on the next request, with the
+    flags in services/llama-swap/config.yaml.
+
+    Under LM Studio, llama-server's host memory grows through a long session (6 to 12 GB),
+    because LM Studio leaves its 8 GiB prompt cache on. The llama-swap config turns that cache
+    off (-cram 0), which held it flat at about 4.6 GB in the 2026-11-11 test.
     """
     tier = settings.tier(tier_name or settings.default_tier)
+    if settings.model_server == "llama-swap":
+        _llama_swap_unload(tier.base_url, post or httpx.post)
+        return
     lms = shutil.which("lms") or str(Path("~/.lmstudio/bin/lms.exe").expanduser())
     run([lms, "unload", "--all"], check=False, capture_output=True)
     run([lms, "load", tier.lms_key or tier.model, "--context-length", str(settings.research.context_window),
          "--gpu", "max", "--identifier", tier.model, "-y"], check=True, capture_output=True)
+
+
+def _llama_swap_unload(base_url: str, post) -> None:
+    root = base_url.removesuffix("/v1")
+    response = post(f"{root}/api/models/unload", timeout=60)
+    if response.status_code == 404:   # older llama-swap builds
+        response = post(f"{root}/unload", timeout=60)
+    response.raise_for_status()
 
 
 def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,

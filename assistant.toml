@@ -9,6 +9,7 @@ searxng_url = "http://127.0.0.1:8888"    # from compose.yaml
 proxy_port = 8765                        # python -m assistant proxy; LDR points here
 codex_dir = "~/Desktop/local-ai-codex"   # papers and books (private, outside the repo); see codex/catalog.toml
 vault_dir = "D:/model-vault"             # verified model weights (outside the repo); see assistant/vault.py
+model_server = "llama-swap"              # or "lmstudio"; start it with scripts/start_llama_swap.ps1 (README, "Model server")
 
 # Stage 2: Local Deep Research, run in its own venv and pointed at the gateway proxy.
 [research]
@@ -20,11 +21,11 @@ embed_model = "text-embedding-nomic-embed-text-v1.5"   # codex index embeddings,
 codex_k = 8                                            # codex chunks returned per search
 writer_temperature = 0.3                               # local tiers while writing reports; steadier runs
 
-# Local tiers: LM Studio on this PC. Chosen in Stage 0 (see README, "Stage 0 results").
+# Local tiers: llama-swap (or LM Studio) on this PC, same port and model names. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
 [tiers.local]
 kind = "local"
-label = "Gemma 4 E4B QAT (LM Studio)"
+label = "Gemma 4 E4B QAT (local)"
 base_url = "http://127.0.0.1:1234/v1"
 model = "gemma-4-e4b-qat"
 lms_key = "gemma-4-e4b-it-qat"
@@ -34,7 +35,7 @@ extra_body = { top_p = 0.95, top_k = 64 }
 
 [tiers.local-backup]
 kind = "local"
-label = "Qwen3.5 9B Q4_K_M (LM Studio)"
+label = "Qwen3.5 9B Q4_K_M (local)"
 base_url = "http://127.0.0.1:1234/v1"
 model = "qwen3.5-9b"
 lms_key = "qwen/qwen3.5-9b"              # the Q4_K_M; plain "qwen3.5-9b" makes `lms load` pick the Q6_K import

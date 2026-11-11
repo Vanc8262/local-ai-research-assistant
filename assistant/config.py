@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 KINDS = ("local", "cloud")
+MODEL_SERVERS = ("lmstudio", "llama-swap")
 
 
 @dataclass
@@ -66,6 +67,7 @@ class Settings:
     proxy_port: int = 8765
     codex_dir: Path = Path("~/Desktop/local-ai-codex").expanduser()
     vault_dir: Path = Path("~/model-vault").expanduser()
+    model_server: str = "lmstudio"       # "lmstudio" or "llama-swap"; decides how models are reloaded
     tiers: dict[str, Tier] = field(default_factory=dict)
     research: ResearchSettings = field(default_factory=ResearchSettings)
 
@@ -87,7 +89,10 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
         proxy_port=int(main.get("proxy_port", 8765)),
         codex_dir=Path(main.get("codex_dir", "~/Desktop/local-ai-codex")).expanduser(),
         vault_dir=Path(main.get("vault_dir", "~/model-vault")).expanduser(),
+        model_server=main.get("model_server", "lmstudio"),
     )
+    if settings.model_server not in MODEL_SERVERS:
+        raise ValueError(f"model_server must be one of {MODEL_SERVERS}, not {settings.model_server!r}")
     settings.research = ResearchSettings(**raw.get("research", {}))
     for name, entry in raw.get("tiers", {}).items():
         settings.tiers[name] = Tier(name=name, **entry)

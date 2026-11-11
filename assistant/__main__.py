@@ -192,8 +192,9 @@ def _codex_index(settings, args) -> int:
         print(f"blocked: {exc}")
         return 1
     if record.get("error"):
-        print(f"index failed: {record['error']}\nIs the embedding model loaded? "
-              f"lms load {settings.research.embed_model}")
+        hint = ("Is llama-swap running? scripts/start_llama_swap.ps1" if settings.model_server == "llama-swap"
+                else f"Is the embedding model loaded? lms load {settings.research.embed_model}")
+        print(f"index failed: {record['error']}\n{hint}")
         return 1
     state = "already up to date" if record.get("current") else f"built in {record.get('elapsed_s')} s"
     print(f"Codex index {state}: {len(record.get('files', []))} PDFs, {record.get('chunks')} chunks\n"
