@@ -1,7 +1,7 @@
-# llama-swap: serves the local models on 127.0.0.1:1234 in place of LM Studio's server.
-# Start it with scripts/start_llama_swap.ps1, which finds llama-server and the GGUF files
-# (LM Studio's own copies) and sets the LLAMA_SERVER, GEMMA_GGUF, QWEN_GGUF and NOMIC_GGUF
-# environment variables this file reads.
+# llama-swap: serves the local models on 127.0.0.1:1234.
+# Start it with scripts/start_llama_swap.ps1, which finds llama-server (installed by
+# scripts/install_llama_cpp.ps1) and the GGUF files (in D:\models) and sets the
+# LLAMA_SERVER, GEMMA_GGUF, QWEN_GGUF and NOMIC_GGUF environment variables this file reads.
 #
 # Why: LM Studio leaves llama-server's 8 GiB host prompt cache on and runs 4 slots, so the
 # server grew from 5.7 to 12.1 GB during one verification and free RAM fell to 324 MB.

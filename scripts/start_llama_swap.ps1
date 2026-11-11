@@ -1,39 +1,35 @@
-# Start llama-swap on 127.0.0.1:1234 with services/llama-swap/config.yaml, in place of
-# LM Studio's server. Uses the llama-server and GGUF files LM Studio already has, so
-# nothing is downloaded twice. Stop LM Studio's server first (`lms server stop`), since
-# both want port 1234. Set model_server = "llama-swap" in assistant.toml to match.
+# Start llama-swap on 127.0.0.1:1234 with services/llama-swap/config.yaml.
+# Needs, once: scripts\install_llama_cpp.ps1 (llama-server), scripts\copy_models.ps1 (the
+# GGUF files in D:\models) and `winget install mostlygeek.llama-swap`. assistant.toml has
+# model_server = "llama-swap" to match.
 #
 #   powershell -ExecutionPolicy Bypass -File scripts\start_llama_swap.ps1
 param(
     [string]$Listen = "127.0.0.1:1234",
-    [string]$Models = (Join-Path $env:USERPROFILE ".lmstudio\models")
+    [string]$Models = "D:\models",
+    [string]$LlamaCpp = (Join-Path $env:USERPROFILE "tools\llama.cpp")
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path $PSScriptRoot -Parent
 
-function Find-One([string[]]$Root, [string]$Pattern, [string]$What) {
+function Find-One([string]$Root, [string]$Pattern, [string]$What) {
     $hit = Get-ChildItem -Path $Root -Recurse -File -Filter $Pattern -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -notlike "mmproj*" } | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $hit) { throw "Could not find $What ($Pattern under $Root)." }
+    if (-not $hit) { throw "Could not find $What ($Pattern under $Root). Run scripts\copy_models.ps1, or download it into $Root." }
     return $hit.FullName
 }
 
-# llama-server: LM Studio's newest CUDA llama.cpp backend (by version, not date). Its CUDA DLLs live beside it.
-$backends = Join-Path $env:USERPROFILE ".lmstudio\extensions\backends"
-$server = Get-ChildItem -Path $backends -Recurse -File -Filter "llama-server.exe" -ErrorAction SilentlyContinue |
-    Where-Object { $_.FullName -match "cuda" } |
-    Sort-Object { [version]($_.Directory.Name -replace ".*-", "") } -Descending | Select-Object -First 1
-if (-not $server) { throw "No CUDA llama-server.exe under $backends. Is LM Studio's CUDA runtime installed?" }
-$env:LLAMA_SERVER = $server.FullName
-$dllDirs = @($server.DirectoryName) + (Get-ChildItem -Path $backends -Directory -Recurse -ErrorAction SilentlyContinue |
-    Where-Object { Get-ChildItem $_.FullName -Filter "cudart*.dll" -ErrorAction SilentlyContinue } |
-    ForEach-Object FullName)
-$env:PATH = (($dllDirs | Select-Object -Unique) -join ";") + ";" + $env:PATH
+# llama-server from install_llama_cpp.ps1; its CUDA DLLs sit beside it.
+$current = Join-Path $LlamaCpp "current.txt"
+if (-not (Test-Path $current)) { throw "No llama.cpp install found. Run scripts\install_llama_cpp.ps1 first." }
+$bin = (Get-Content $current -Raw).Trim()
+$env:LLAMA_SERVER = Join-Path $bin "llama-server.exe"
+if (-not (Test-Path $env:LLAMA_SERVER)) { throw "$env:LLAMA_SERVER is missing. Rerun scripts\install_llama_cpp.ps1." }
+$env:PATH = "$bin;$env:PATH"
 
 $env:GEMMA_GGUF = Find-One $Models "*gemma-4-E4B*q4_0*.gguf" "Gemma 4 E4B QAT"
 $env:QWEN_GGUF = Find-One $Models "*Qwen3.5-9B*Q4_K_M*.gguf" "Qwen3.5 9B Q4_K_M"
-# LM Studio ships nomic as a bundled model, outside the models folder.
-$env:NOMIC_GGUF = Find-One @($Models, (Join-Path $env:USERPROFILE ".lmstudio\.internal\bundled-models")) "*nomic-embed-text-v1.5*.gguf" "nomic-embed-text v1.5"
+$env:NOMIC_GGUF = Find-One $Models "*nomic-embed-text-v1.5*.gguf" "nomic-embed-text v1.5"
 
 $swap = (Get-Command llama-swap -ErrorAction SilentlyContinue).Source
 if (-not $swap) {

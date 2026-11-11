@@ -19,7 +19,7 @@ A local-first assistant that researches a topic and then implements the result i
 | Budget | Free cloud tiers only for now; a paid, hard-capped tier may be added later |
 | Code locality | Code from public GitHub repos may go to cloud tiers; code from private or unpublished repos never does |
 | Autonomy | The assistant edits repos on its own, on a git branch, gated by tests. It never commits to main |
-| Environment | Docker and WSL2 for services; LM Studio on the Windows host for GPU access |
+| Environment | Docker and WSL2 for services; llama.cpp (`llama-server`, switched by llama-swap) on the Windows host for GPU access |
 
 ## Architecture
 
@@ -39,7 +39,7 @@ Diagram: [architecture and roadmap in Lucidchart](https://lucid.app/lucidchart/e
      +------------------+------------------+
      |                  |                  |
  Local model      Free cloud tier     Manual hand-off
- (LM Studio)     (Gemini Flash, Groq)  (started by a person,
+ (llama.cpp)     (Gemini Flash, Groq)  (started by a person,
  private code,   no private code,       never routed)
  or by default   quota left
 
@@ -61,7 +61,7 @@ The code-locality check is default-deny. Anything read from a repo is tagged pri
 
 | Piece | Reused | Written here |
 | --- | --- | --- |
-| Model serving | LM Studio local server (OpenAI-compatible API) | Model profiles |
+| Model serving | llama.cpp `llama-server` behind llama-swap (OpenAI-compatible API) | Model profiles, server flags |
 | Web search | SearXNG in Docker | Source policy and rate limiting |
 | Research engine | [Local Deep Research](https://github.com/LearningCircuit/local-deep-research) through its API | A wrapper that returns a report plus structured findings |
 | Code editing | Aider or OpenCode as the executor | The task loop: branch, edit, test, retry, stop |
@@ -85,7 +85,7 @@ The thresholds are proposals and will be revised once Stage 0 produces real numb
 
 ## Running it (Stage 1)
 
-Services run in Docker; models run on the Windows host through llama-swap (see [Model server](#model-server)), or LM Studio with `model_server = "lmstudio"`.
+Services run in Docker; models run on the Windows host through llama-swap (see [Model server](#model-server)).
 
 ```powershell
 docker compose up -d                                   # SearXNG on http://127.0.0.1:8888
@@ -110,11 +110,11 @@ python -m assistant vault verify                       # re-hash every stored fi
 
 Tiers are defined in [`assistant.toml`](assistant.toml). A cloud tier reads its key from an environment variable (`GEMINI_API_KEY` for Gemini) and never from a file in the repo. Prompts count as private unless `--public` is given, and private prompts are refused by cloud tiers. Every model call and search is a line in `runs/<run_id>.jsonl` with its tier, token counts and timing.
 
-Tools that make their own model calls, such as Local Deep Research in Stage 2, point at `python -m assistant proxy` instead of LM Studio. The request's model name picks the tier (`local`, `local-backup` or `gemini`), and every call is logged and privacy-checked like `ask`. A proxy session is private unless started with `--public`. In a public session, a failed cloud call is retried once on the local tier.
+Tools that make their own model calls, such as Local Deep Research in Stage 2, point at `python -m assistant proxy` instead of the model server. The request's model name picks the tier (`local`, `local-backup` or `gemini`), and every call is logged and privacy-checked like `ask`. A proxy session is private unless started with `--public`. In a public session, a failed cloud call is retried once on the local tier.
 
 `research` runs Local Deep Research from its own venv (`[research] ldr_python`) with the proxy as its only model provider, and saves `report.md`, `sources.json` and LDR's raw `result.json` under `runs/<run_id>/`. Tavily sees the query, so like a cloud tier it needs `--public`.
 
-`codex index` reads each downloaded PDF page by page, splits the text into chunks of about 1,000 characters and embeds them with `text-embedding-nomic-embed-text-v1.5` on LM Studio (load it with `lms load text-embedding-nomic-embed-text-v1.5`; it adds about 0.5 GB of RAM and 0.3 GB of VRAM next to Gemma). The FAISS index is saved in `<codex_dir>/.index`, outside the repo, and is rebuilt only when the set of PDFs changes. `research --search codex` gives that index to Local Deep Research as its search engine, searching it two ways at once: by meaning (embeddings) and by exact words and figures (BM25), so a "48GB" or a "Q4_K_M" is found even where the embedding blurs it, and each source is a page of a codex file (`file:///…/react.pdf#page=3`). The codex is private, so codex research refuses `--public` and embeddings must come from a server on this PC. The verifier checks a codex citation against the chunk the model was given instead of fetching it. Local Deep Research will not mix a private engine with web search in one run, so the codex and the web are searched in separate runs.
+`codex index` reads each downloaded PDF page by page, splits the text into chunks of about 1,000 characters and embeds them with `text-embedding-nomic-embed-text-v1.5`, which llama-swap keeps loaded next to Gemma (about 0.9 GB of RAM and 0.3 GB of VRAM). The FAISS index is saved in `<codex_dir>/.index`, outside the repo, and is rebuilt only when the set of PDFs changes. `research --search codex` gives that index to Local Deep Research as its search engine, searching it two ways at once: by meaning (embeddings) and by exact words and figures (BM25), so a "48GB" or a "Q4_K_M" is found even where the embedding blurs it, and each source is a page of a codex file (`file:///…/react.pdf#page=3`). The codex is private, so codex research refuses `--public` and embeddings must come from a server on this PC. The verifier checks a codex citation against the chunk the model was given instead of fetching it. Local Deep Research will not mix a private engine with web search in one run, so the codex and the web are searched in separate runs.
 
 `verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported). The command exits with status 1 while any claim is uncited or unsupported, or cites a missing source, so it can gate a script.
 
@@ -145,12 +145,26 @@ Ranges cover the second seed. Research and vision show the automatic score; manu
 
 ## Model server
 
-The eval and the gateway reach the local models through llama-swap on `127.0.0.1:1234`, running the `llama-server` that ships with LM Studio, with the flags in [`services/llama-swap/config.yaml`](services/llama-swap/config.yaml). LM Studio stays installed for chat and model downloads.
+The eval and the gateway reach the local models through llama-swap on `127.0.0.1:1234`, which starts and stops llama.cpp's `llama-server` with the flags in [`services/llama-swap/config.yaml`](services/llama-swap/config.yaml). Nothing depends on LM Studio: llama.cpp comes from its own GitHub releases and the models live in `D:\models`, in `<publisher>\<repo>\<file>.gguf` folders.
 
 ```powershell
-lms server stop                                        # free port 1234
-powershell -ExecutionPolicy Bypass -File scripts\start_llama_swap.ps1   # needs: winget install mostlygeek.llama-swap
+# once
+winget install mostlygeek.llama-swap
+powershell -ExecutionPolicy Bypass -File scripts\install_llama_cpp.ps1   # newest CUDA build into ~\tools\llama.cpp; -Tag to pin one
+powershell -ExecutionPolicy Bypass -File scripts\copy_models.ps1         # LM Studio's models -> D:\models (copies, checks sizes)
+
+# before research or an eval
+powershell -ExecutionPolicy Bypass -File scripts\start_llama_swap.ps1
 ```
+
+New models come straight from Hugging Face, into the same layout:
+
+```powershell
+.venv\Scripts\python.exe -m pip install huggingface_hub
+.venv\Scripts\hf download lmstudio-community/Qwen3.5-9B-GGUF Qwen3.5-9B-Q4_K_M.gguf --local-dir D:\models\lmstudio-community\Qwen3.5-9B-GGUF
+```
+
+Run `vault scan <file>` on a new GGUF before loading it. A new model for the eval also needs an entry in `config.yaml` and a tier in `assistant.toml`; a new benchmark model needs a file pattern in `scripts/run_stage0.ps1`, which starts `llama-server` itself (stop llama-swap first, both use port 1234).
 
 Why: under LM Studio, `llama-server` grows from about 6 to 12 GB during a long verification, because LM Studio leaves the 8 GiB host prompt cache on and runs 4 slots. Free RAM fell to 86 MB in the Nov 8 eval. Measured on 2026-11-11, re-verifying the same report (50 model calls, Gemma 4 E4B, 32K):
 
@@ -160,11 +174,11 @@ Why: under LM Studio, `llama-server` grows from about 6 to 12 GB during a long v
 | LM Studio, Keep Model in Memory off | 12.1 GB | 1.6 GB | 70 tok/s |
 | llama-swap, `-cram 0 -np 1 -lm mmap --no-mmproj` | 4.6 GB | 7.4 GB | 77 tok/s |
 
-All three gave the same verdicts. Gemma's lazy embeddings flag (`-lzm on`) saved nothing and cost speed, so it is off. Under llama-swap, `reload_model` asks it to unload, and the next request loads the model fresh. Gemma and the embedding model stay loaded together (Gemma 4.5 GB, nomic 0.9 GB private during a codex run). Loading Qwen unloads them; Qwen's server used 7.3 GB private on a short check, which still needs a look. Checked on 2026-11-11 with one aws-pillars eval run per mode: lowest free RAM was 6.3 GB in hybrid and 2.1 GB in local (where Docker's WSL VM took 2 GB), with llama-server flat at 4.6 GB private. Set `model_server = "lmstudio"` in `assistant.toml` to go back to LM Studio.
+All three gave the same verdicts. Gemma's lazy embeddings flag (`-lzm on`) saved nothing and cost speed, so it is off. Under llama-swap, `reload_model` asks it to unload, and the next request loads the model fresh. Gemma and the embedding model stay loaded together (Gemma 4.5 GB, nomic 0.9 GB private during a codex run). Loading Qwen unloads them; Qwen's server used 7.3 GB private on a short check, which still needs a look. Checked on 2026-11-11 with one aws-pillars eval run per mode: lowest free RAM was 6.3 GB in hybrid and 2.1 GB in local (where Docker's WSL VM took 2 GB), with llama-server flat at 4.6 GB private. `model_server = "lmstudio"` in `assistant.toml` still drives LM Studio through `lms`, for anyone who keeps it installed.
 
 ## Local decisions (option scoring)
 
-Some steps need a decision, not text: which command a request needs, which tier runs a step, whether a passage supports a claim, whether a shell command is destructive. `assistant/decide.py` answers these the way a "System One" model such as TypeSafe's Jev does, but on the local model already loaded in LM Studio, so it costs nothing and adds no RAM. Each question has fixed options shown under letters; the decider reads the probability the model gives each letter for its first token instead of parsing generated text. Question types follow Jev's: `choice`, `score` and `noul` (true or false).
+Some steps need a decision, not text: which command a request needs, which tier runs a step, whether a passage supports a claim, whether a shell command is destructive. `assistant/decide.py` answers these the way a "System One" model such as TypeSafe's Jev does, but on the local model already loaded, so it costs nothing and adds no RAM. Each question has fixed options shown under letters; the decider reads the probability the model gives each letter for its first token instead of parsing generated text. Question types follow Jev's: `choice`, `score` and `noul` (true or false).
 
 ```powershell
 .\.venv\Scripts\python.exe -m assistant decide probe -t local -t local-backup   # which method works on each tier
@@ -172,11 +186,11 @@ Some steps need a decision, not text: which command a request needs, which tier 
 .\.venv\Scripts\python.exe -m assistant decide check -t local --debias          # also ask with the options reversed
 ```
 
-Decisions run on local tiers only and are logged as `decide` steps. If LM Studio returns no token probabilities, the decider falls back to the letter the model writes at temperature 0, which gives a decision but no probability. The probabilities are not calibrated; thresholds come from the check's "confidence when right / when wrong" lines. The cases follow the use cases ranked on 2026-11-08: request routing, model routing, eval grading, bulk labelling, agent control and map-reduce features first, guardrails second.
+Decisions run on local tiers only and are logged as `decide` steps. If the server returns no token probabilities, the decider falls back to the letter the model writes at temperature 0, which gives a decision but no probability. The probabilities are not calibrated; thresholds come from the check's "confidence when right / when wrong" lines. The cases follow the use cases ranked on 2026-11-08: request routing, model routing, eval grading, bulk labelling, agent control and map-reduce features first, guardrails second.
 
 ## Model vault
 
-The vault keeps permanent local copies of the open-weight models chosen to keep, so they never depend on a hosted service. It lives outside the repo at `vault_dir` (`D:/model-vault`, the 2 TB disk), in LM Studio's `<publisher>/<repo>` layout, with `manifest.json` recording each model's source, exact commit, license, the reason it was picked, and every file's size and SHA-256. Research notes: [Owning open model weights locally](https://claude.ai/artifact/4rQnYU23cB5b3ZVQFGCY8P).
+The vault keeps permanent local copies of the open-weight models chosen to keep, so they never depend on a hosted service. It lives outside the repo at `vault_dir` (`D:/model-vault`, the 2 TB disk), in the same `<publisher>/<repo>` layout as `D:\models`, with `manifest.json` recording each model's source, exact commit, license, the reason it was picked, and every file's size and SHA-256. Research notes: [Owning open model weights locally](https://claude.ai/artifact/4rQnYU23cB5b3ZVQFGCY8P).
 
 **Only picked models go in.** Picking is its own decision step after benchmarking: once a model's bench results are in, Van decides whether it is kept, and only then is it added to [`vault.toml`](vault.toml) with the bench run that justified it. `vault plan` shows what the picks would change and `vault sync` stores exactly those. Nothing is added automatically, and nothing is deleted: a model dropped from `vault.toml` shows as "not picked" until it is removed by hand. The file ships with no picks.
 
@@ -184,10 +198,10 @@ What the vault enforces:
 
 - Weights are safetensors or GGUF only. Pickle formats (`.bin`, `.pt`, `.ckpt`, ...) and a repo's `.py` files can run code on load and are never downloaded. A pickle renamed to `.safetensors` fails the format check.
 - A Hugging Face pick names a full 40-character commit, and every weight file must match the SHA-256 Hugging Face publishes for it; a mismatch is deleted.
-- A GGUF chat template that reaches for Python internals (`__class__`, `__globals__`, `os.`, ..., as in CVE-2024-34359) is refused. `vault scan <file>` runs the same checks on any file before LM Studio loads it.
+- A GGUF chat template that reaches for Python internals (`__class__`, `__globals__`, `os.`, ..., as in CVE-2024-34359) is refused. `vault scan <file>` runs the same checks on any file before it is loaded.
 - Stored files are read-only, and `vault verify` re-hashes them, flagging changed, missing, writable or unrecorded files.
 
-Still to come: backups to an external drive with restic, signing the manifest with OpenSSF `model_signing`, pointing LM Studio's models directory at the vault, and the manifest hash in each run-log step.
+Still to come: backups to an external drive with restic, signing the manifest with OpenSSF `model_signing`, serving the picked models from the vault instead of `D:\models`, and the manifest hash in each run-log step.
 
 ## Planned model: Gemma 4 E4B Heretic
 
@@ -203,13 +217,13 @@ What has been published, all by the uploader: 3 refusals out of 100 test prompts
 | Research, vision, speed, headroom | Included in the six-suite run | Stock E4B |
 
 ```powershell
-lms load gemma-4-e4b-it-ultra-uncensored-heretic --context-length 8192 --gpu max --identifier gemma-4-e4b-heretic
-python -m bench run --model gemma-4-e4b-heretic --tag heretic
+.venv\Scripts\hf download llmfan46/gemma-4-E4B-it-ultra-uncensored-heretic-GGUF --include "*Q4_K_M*" "mmproj*" --local-dir D:\models\llmfan46\gemma-4-E4B-it-ultra-uncensored-heretic-GGUF
+powershell -ExecutionPolicy Bypass -File scripts\run_stage0.ps1 -Models gemma-4-e4b-heretic
 ```
 
 **Gate to keep it:** tools within 3 points of the stock model on both seeds, with recovery no worse than 1 of 4 and a 100% valid call format; code 9 or 10 of 10; research and vision within 5 points; speed and VRAM unchanged.
 
-**Use if it passes:** a third local model for chat only. Research and code runs stay on the stock Gemma E4B and Qwen. A model edited to follow every instruction will also follow instructions planted in the web pages and files it reads, so it stays out of the automated pipeline. If it fails, it stays a plain LM Studio chat model.
+**Use if it passes:** a third local model for chat only. Research and code runs stay on the stock Gemma E4B and Qwen. A model edited to follow every instruction will also follow instructions planted in the web pages and files it reads, so it stays out of the automated pipeline. If it fails, it is not used.
 
 ## Stage 0 plan
 

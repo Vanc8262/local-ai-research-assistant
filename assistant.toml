@@ -17,7 +17,7 @@ ldr_python = "~/.venvs/ldr/Scripts/python.exe"
 context_window = 32768
 iterations = 3
 timeout_s = 3600
-embed_model = "text-embedding-nomic-embed-text-v1.5"   # codex index embeddings, served by LM Studio
+embed_model = "text-embedding-nomic-embed-text-v1.5"   # codex index embeddings, served by llama-swap
 codex_k = 8                                            # codex chunks returned per search
 writer_temperature = 0.3                               # local tiers while writing reports; steadier runs
 

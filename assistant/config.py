@@ -46,7 +46,7 @@ class ResearchSettings:
     context_window: int = 32768
     iterations: int = 3
     timeout_s: int = 3600
-    embed_model: str = "text-embedding-nomic-embed-text-v1.5"   # LM Studio, for the codex index
+    embed_model: str = "text-embedding-nomic-embed-text-v1.5"   # served by llama-swap, for the codex index
     embed_url: str = ""                  # empty means the default tier's server
     codex_k: int = 8                     # codex chunks per search
     writer_temperature: float | None = None   # local tiers while writing a report; None keeps the tier's
@@ -67,7 +67,7 @@ class Settings:
     proxy_port: int = 8765
     codex_dir: Path = Path("~/Desktop/local-ai-codex").expanduser()
     vault_dir: Path = Path("~/model-vault").expanduser()
-    model_server: str = "lmstudio"       # "lmstudio" or "llama-swap"; decides how models are reloaded
+    model_server: str = "lmstudio"       # "llama-swap" (the project default in assistant.toml) or "lmstudio"
     tiers: dict[str, Tier] = field(default_factory=dict)
     research: ResearchSettings = field(default_factory=ResearchSettings)
 
