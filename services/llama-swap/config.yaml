@@ -30,7 +30,7 @@ models:
       ${server} -m "${env.QWEN_GGUF}" -c 32768 ${lean}
   "text-embedding-nomic-embed-text-v1.5":
     cmd: |
-      ${server} -m "${env.NOMIC_GGUF}" --embedding --pooling mean -c 2048 -b 2048 -ub 2048 -ngl 99 -np 1
+      ${server} -m "${env.NOMIC_GGUF}" --embedding --pooling mean -c 2048 -b 2048 -ub 2048 -ngl 99 -np 1 -lm mmap -cram 0
 
 groups:
   # Gemma and the embedding model stay loaded together (codex research uses both).

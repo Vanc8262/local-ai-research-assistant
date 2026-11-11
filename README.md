@@ -160,7 +160,7 @@ Why: under LM Studio, `llama-server` grows from about 6 to 12 GB during a long v
 | LM Studio, Keep Model in Memory off | 12.1 GB | 1.6 GB | 70 tok/s |
 | llama-swap, `-cram 0 -np 1 -lm mmap --no-mmproj` | 4.6 GB | 7.4 GB | 77 tok/s |
 
-All three gave the same verdicts. Gemma's lazy embeddings flag (`-lzm on`) saved nothing and cost speed, so it is off. Under llama-swap, `reload_model` asks it to unload, and the next request loads the model fresh. Gemma and the embedding model stay loaded together. Loading Qwen unloads them. Qwen has not been measured under llama-swap yet. Set `model_server = "lmstudio"` in `assistant.toml` to go back to LM Studio.
+All three gave the same verdicts. Gemma's lazy embeddings flag (`-lzm on`) saved nothing and cost speed, so it is off. Under llama-swap, `reload_model` asks it to unload, and the next request loads the model fresh. Gemma and the embedding model stay loaded together (Gemma 4.5 GB, nomic 0.9 GB private during a codex run). Loading Qwen unloads them; Qwen's server used 7.3 GB private on a short check, which still needs a look. Checked on 2026-11-11 with one aws-pillars eval run per mode: lowest free RAM was 6.3 GB in hybrid and 2.1 GB in local (where Docker's WSL VM took 2 GB), with llama-server flat at 4.6 GB private. Set `model_server = "lmstudio"` in `assistant.toml` to go back to LM Studio.
 
 ## Local decisions (option scoring)
 
