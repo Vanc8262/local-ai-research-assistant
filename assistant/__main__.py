@@ -398,6 +398,9 @@ def _fmt(value, pattern: str) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
+    for stream in (sys.stdout, sys.stderr):   # Windows consoles are cp1252; an emoji in a reply must not crash
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     parser = argparse.ArgumentParser(prog="python -m assistant", description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default="assistant.toml")

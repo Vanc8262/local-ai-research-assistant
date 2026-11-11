@@ -1,5 +1,5 @@
 """Speed suite: time to first token and tokens per second on three fixed
-prompts, plus a reasoning on/off comparison through LM Studio's own API."""
+prompts, plus a reasoning on/off comparison (LM Studio's own API, or the chat template's switch)."""
 from __future__ import annotations
 
 import re
@@ -40,7 +40,7 @@ REASONING_PROBE = ("A train leaves at 14:10 and the trip takes 2 hours 55 minute
 
 
 def reasoning_comparison(ctx: Ctx) -> list[dict]:
-    """Same prompt with reasoning on and off, via LM Studio's /api/v1/chat."""
+    """Same prompt with reasoning on and off (see ChatClient.native_chat)."""
     rows = []
     if ctx.client is None or not hasattr(ctx.client, "native_chat"):
         return rows

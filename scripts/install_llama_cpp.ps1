@@ -15,8 +15,17 @@ param(
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"   # Invoke-WebRequest is very slow with the progress bar on
 
-$api = "https://api.github.com/repos/ggml-org/llama.cpp/releases/" + $(if ($Tag -eq "latest") { "latest" } else { "tags/$Tag" })
-$release = Invoke-RestMethod -Uri $api -Headers @{ "User-Agent" = "local-ai-research-assistant" }
+$api = "https://api.github.com/repos/ggml-org/llama.cpp/releases"
+$headers = @{ "User-Agent" = "local-ai-research-assistant" }
+if ($Tag -eq "latest") {
+    # The b<N> builds are marked pre-release, so /releases/latest is a marker release with no binaries.
+    # The parentheses make PowerShell 5.1 unroll the JSON array before filtering.
+    $release = (Invoke-RestMethod -Uri "${api}?per_page=20" -Headers $headers) |
+        Where-Object { $_.assets.name -match "-bin-win-cuda-$Cuda\." } | Select-Object -First 1
+    if (-not $release) { throw "No Windows CUDA $Cuda build among the last 20 llama.cpp releases." }
+} else {
+    $release = Invoke-RestMethod -Uri "$api/tags/$Tag" -Headers $headers
+}
 $tagName = $release.tag_name
 $bin = $release.assets | Where-Object { $_.name -match "^llama-.*-bin-win-cuda-$Cuda\.[\d.]+-x64\.zip$" } | Select-Object -First 1
 if (-not $bin) { throw "Release $tagName has no Windows CUDA $Cuda build. Assets: $($release.assets.name -join ', ')" }

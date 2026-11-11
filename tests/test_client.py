@@ -97,6 +97,21 @@ def test_native_chat_reports_unsupported_setting():
     assert "HTTP 400" in outcome["error"]
 
 
+def test_native_chat_falls_back_to_chat_template_switch():
+    seen = []
+
+    def handler(request):
+        if request.url.path == "/api/v1/chat":
+            return httpx.Response(404)
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=fake_model.sse({"content": "17:05"}))
+
+    client = client_for(handler)
+    on, off = (client.native_chat("m", "q", reasoning=r) for r in ("on", "off"))
+    assert [b["chat_template_kwargs"] for b in seen] == [{"enable_thinking": True}, {"enable_thinking": False}]
+    assert off["answer"] == "17:05" and off["stats"]["total_output_tokens"] == 40 and "error" not in on
+
+
 def test_models_fall_back_to_openai_list():
     def handler(request):
         if request.url.path == "/v1/models":
