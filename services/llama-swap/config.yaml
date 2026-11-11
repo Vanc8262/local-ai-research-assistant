@@ -1,0 +1,45 @@
+# llama-swap: serves the local models on 127.0.0.1:1234 in place of LM Studio's server.
+# Start it with scripts/start_llama_swap.ps1, which finds llama-server and the GGUF files
+# (LM Studio's own copies) and sets the LLAMA_SERVER, GEMMA_GGUF, QWEN_GGUF and NOMIC_GGUF
+# environment variables this file reads.
+#
+# Why: LM Studio leaves llama-server's 8 GiB host prompt cache on and runs 4 slots, so the
+# server grew from 5.7 to 12.1 GB during one verification and free RAM fell to 324 MB.
+# With the flags below it stayed at 4.6 GB, with 7.4 GB free and 77 tok/s instead of 70
+# (2026-11-11, Gemma 4 E4B, 32K; see README "Model server").
+#   -cram 0       no host prompt cache (the growth)
+#   -np 1 -kvu    one slot; we send one request at a time
+#   -lm mmap      map the GGUF without locking it in RAM (LM Studio uses mmap+mlock)
+#   --no-mmproj   no vision projector for text work (~0.95 GB)
+# Lazy mode (-lzm on) was tested too: it saved nothing and cost 17% speed, so it is off.
+# Model ids match the `model` names in assistant.toml.
+
+healthCheckTimeout: 300
+startPort: 10001
+
+macros:
+  server: '"${env.LLAMA_SERVER}" --host 127.0.0.1 --port ${PORT}'
+  lean: "-ngl 99 -lm mmap -cram 0 -np 1 -kvu -fa auto -t 4 --no-mmproj"
+
+models:
+  "gemma-4-e4b-qat":
+    cmd: |
+      ${server} -m "${env.GEMMA_GGUF}" -c 32768 ${lean}
+  "qwen3.5-9b":
+    cmd: |
+      ${server} -m "${env.QWEN_GGUF}" -c 32768 ${lean}
+  "text-embedding-nomic-embed-text-v1.5":
+    cmd: |
+      ${server} -m "${env.NOMIC_GGUF}" --embedding --pooling mean -c 2048 -b 2048 -ub 2048 -ngl 99 -np 1 -lm mmap -cram 0
+
+groups:
+  # Gemma and the embedding model stay loaded together (codex research uses both).
+  "research":
+    swap: false
+    exclusive: true
+    members: ["gemma-4-e4b-qat", "text-embedding-nomic-embed-text-v1.5"]
+  # Loading the backup model unloads the research group, and the other way round.
+  "backup":
+    swap: true
+    exclusive: true
+    members: ["qwen3.5-9b"]

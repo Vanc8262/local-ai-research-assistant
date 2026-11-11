@@ -109,6 +109,32 @@ def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):
                                            "--gpu", "max", "--identifier", "gemma", "-y"]]
 
 
+
+def test_reload_under_llama_swap_asks_it_to_unload(tmp_path):
+    from assistant.evaluate import reload_model
+    settings = settings_for(tmp_path)
+    settings.model_server = "llama-swap"
+    settings.tiers["local"].base_url = "http://127.0.0.1:1234/v1"
+    posts = []
+
+    def post(url, **kw):
+        posts.append(url)
+        return httpx.Response(404 if url.endswith("/api/models/unload") else 200, request=httpx.Request("POST", url))
+
+    reload_model(settings, run=lambda *a, **kw: posts.append("lms called"), post=post)
+    assert posts == ["http://127.0.0.1:1234/api/models/unload", "http://127.0.0.1:1234/unload"]
+
+
+def test_shipped_llama_swap_config_serves_the_local_tiers():
+    import re
+    from assistant.config import load_settings
+    settings = load_settings(ROOT / "assistant.toml")
+    config = (ROOT / "services" / "llama-swap" / "config.yaml").read_text(encoding="utf-8")
+    served = set(re.findall(r'^  "([^"]+)":\n    cmd:', config, flags=re.M))
+    wanted = {t.model for t in settings.tiers.values() if t.kind == "local"} | {settings.research.embed_model}
+    assert wanted <= served
+    assert "-cram 0" in config and "-np 1" in config and "--no-mmproj" in config
+
 FLAGGED_LDR = FAKE_LDR.replace('"Python 3.15 adds lazy imports [1]."',
                                '"Python 3.15 adds lazy imports [1]. It also adds flying cars for every programmer [1]."')
 
