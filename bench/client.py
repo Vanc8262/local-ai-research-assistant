@@ -220,7 +220,7 @@ class ChatClient:
             if choice.get("finish_reason"):
                 result.finish_reason = choice["finish_reason"]
 
-    # -- LM Studio's own REST API (best effort; absent on other servers) --------
+    # -- LM Studio's own REST API (best effort; other servers fall back) ---------
 
     def list_models(self) -> list[dict]:
         """Model details from LM Studio if available, else the plain OpenAI list."""
@@ -243,9 +243,9 @@ class ChatClient:
 
     def native_chat(self, model: str, prompt: str, *, reasoning: str,
                     temperature: float = 0.0, max_output_tokens: int = 2000) -> dict:
-        """One request through LM Studio's /api/v1/chat, which documents a
-        `reasoning` setting ("off", "low", "medium", "high", "on") that the
-        OpenAI-compatible endpoint does not. Returns the server's own stats."""
+        """One request with reasoning on or off. LM Studio's /api/v1/chat has a `reasoning`
+        setting ("off", "low", "medium", "high", "on") and returns its own stats; other
+        servers (404 there) get the chat template's enable_thinking switch instead."""
         body = {
             "model": model, "input": prompt, "reasoning": reasoning,
             "temperature": temperature, "max_output_tokens": max_output_tokens,
@@ -257,6 +257,9 @@ class ChatClient:
         except httpx.HTTPError as exc:
             return {"error": f"{type(exc).__name__}: {exc}"}
         wall = round(time.perf_counter() - started, 3)
+        if resp.status_code == 404:   # not LM Studio (llama-server): use the chat template's switch
+            return self._template_reasoning(model, prompt, reasoning=reasoning, temperature=temperature,
+                                            max_output_tokens=max_output_tokens)
         if resp.status_code >= 400:
             return {"error": f"HTTP {resp.status_code}: {resp.text[:300]}", "wall_s": wall}
         try:
@@ -269,3 +272,18 @@ class ChatClient:
                 content = item.get("content")
                 text += content if isinstance(content, str) else json.dumps(content)
         return {"wall_s": wall, "stats": data.get("stats") or {}, "answer": text.strip()}
+
+    def _template_reasoning(self, model: str, prompt: str, *, reasoning: str, temperature: float,
+                            max_output_tokens: int) -> dict:
+        """Reasoning on/off for servers without LM Studio's /api/v1/chat. llama-server passes
+        chat_template_kwargs to the model's chat template; Qwen3.5 and Gemma 4 read
+        enable_thinking from it."""
+        result = self.chat(model, [{"role": "user", "content": prompt}], temperature=temperature,
+                           max_tokens=max_output_tokens,
+                           extra_body={"chat_template_kwargs": {"enable_thinking": reasoning != "off"}})
+        if result.error:
+            return {"error": result.error, "wall_s": _round(result.total_s)}
+        timing = result.timing()
+        stats = {"tokens_per_second": timing["gen_tps"], "time_to_first_token": timing["ttft_s"],
+                 "total_output_tokens": timing["completion_tokens"], "reasoning_chars": timing["reasoning_chars"]}
+        return {"wall_s": timing["total_s"], "stats": stats, "answer": result.content.strip()}

@@ -1,11 +1,11 @@
-# Stage 0 benchmark settings. Run `python -m bench models` to see the exact
-# model ids your LM Studio server reports, then edit the [[models]] blocks.
+# Stage 0 benchmark settings. scripts/run_stage0.ps1 starts llama-server with each model
+# under the id below (`python -m bench models` shows what the server reports).
 
 [server]
 # 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and every
 # request waited about 2.3 s before falling back, which inflated time to first token.
-base_url = "http://127.0.0.1:1234/v1"   # LM Studio's OpenAI-compatible server
-api_key = "lm-studio"                   # any text unless you set a permission key
+base_url = "http://127.0.0.1:1234/v1"   # llama-server's OpenAI-compatible API
+api_key = "local"                       # any text; llama-server runs without a key
 timeout_s = 900
 
 [defaults]
