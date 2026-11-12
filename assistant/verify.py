@@ -18,6 +18,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -278,6 +279,7 @@ def parse_verdict(answer: str) -> dict:
 def _squash(text: str) -> str:
     """Letters and digits only: ignores spacing, punctuation, table pipes and quote styles."""
     text = re.sub(r"\[\d{1,2}:\d{2}(?::\d{2})?\]", " ", text)   # video transcript timestamps
+    text = unicodedata.normalize("NFKC", text)   # PDF ligatures: "eﬀectively" -> "effectively"
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 

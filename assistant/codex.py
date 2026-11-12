@@ -1,7 +1,8 @@
 """The knowledge codex: a local library of papers and books the research tools can index.
 
 codex/catalog.toml lists what belongs in it, one [[item]] per document, each from
-its author's or publisher's own free download. `fetch` downloads the PDFs into
+its author's or publisher's own free download. `fetch` downloads the PDFs, and prints
+single web pages to PDF with headless Edge or Chrome, into
 <codex_dir>/<topic>/<id>.pdf and records each in <codex_dir>/manifest.csv with its
 source, licence and SHA-256, so a citation to a codex file traces back to where
 it came from. The codex lives outside the repo and counts as private: only local
@@ -15,6 +16,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import os
+import shutil
 import json
 import subprocess
 import time
@@ -31,13 +34,15 @@ from .runlog import RunLog
 
 TOPICS = ("python", "software-engineering", "cloud", "ml", "ai-llm", "llm-agents", "rag",
           "local-models", "data-science")
-KINDS = ("pdf", "html")
+KINDS = ("pdf", "page", "html")   # page: one web page, printed to PDF; html: a whole doc site, skipped
 MANIFEST_FIELDS = ("id", "topic", "title", "authors", "year", "url", "licence", "file", "bytes",
                    "sha256", "downloaded_at")
 INDEXER = Path(__file__).with_name("codex_index.py")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")
 USER_AGENT = "local-ai-research-assistant/0.1 (personal research library; one request at a time)"
 MAX_BYTES = 200 * 2**20   # no single book or paper in the catalog comes near this
+BROWSERS = (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe", "msedge", "chrome", "chromium")
 
 
 class CatalogError(ValueError):
@@ -108,10 +113,12 @@ def sha256_of(path: Path) -> str:
 
 def fetch(items: list[Item], codex_dir: str | Path, log: RunLog, *, only: list[str] | None = None,
           delay_s: float = 3.0, transport=None) -> list[tuple[Item, str]]:
-    """Download each PDF item that is not already in the manifest. Returns (item, outcome) pairs.
+    """Download each item that is not already in the manifest. Returns (item, outcome) pairs.
 
     An item whose file is present and matches its manifest checksum is skipped, so a
-    rerun fetches only what is new or failed. HTML items are left for a later crawler.
+    rerun fetches only what is new or failed. A "page" item is printed to PDF by a headless
+    browser, so the indexer and citations (file#page=N) treat it like any other PDF.
+    "html" items (whole doc sites) are left for a later crawler.
     """
     codex_dir = Path(codex_dir)
     codex_dir.mkdir(parents=True, exist_ok=True)
@@ -127,7 +134,7 @@ def fetch(items: list[Item], codex_dir: str | Path, log: RunLog, *, only: list[s
     try:
         requested = False
         for item in wanted:
-            if item.kind != "pdf":
+            if item.kind == "html":
                 outcomes.append((item, "skipped_html"))
                 continue
             if _already_fetched(item, codex_dir, manifest.get(item.id)):
@@ -136,7 +143,7 @@ def fetch(items: list[Item], codex_dir: str | Path, log: RunLog, *, only: list[s
             if requested and delay_s:
                 time.sleep(delay_s)   # one request at a time, spaced out, as arXiv asks
             requested = True
-            outcome, row = _download(client, item, codex_dir)
+            outcome, row = (_download if item.kind == "pdf" else _print_html)(client, item, codex_dir)
             log.step("download", id=item.id, topic=item.topic, url=item.url, outcome=outcome,
                      bytes=row.get("bytes") if row else None, sha256=row.get("sha256") if row else None)
             if row:
@@ -174,6 +181,41 @@ def _download(client: httpx.Client, item: Item, codex_dir: Path) -> tuple[str, d
     except httpx.HTTPError as exc:
         part.unlink(missing_ok=True)
         return f"error: {type(exc).__name__}", None
+    return _finish(part, item, codex_dir)
+
+
+def _browser() -> str | None:
+    for name in ([os.environ["CODEX_BROWSER"]] if os.environ.get("CODEX_BROWSER") else BROWSERS):
+        if Path(name).is_file() or shutil.which(name):
+            return name
+    return None
+
+
+def _print_html(client, item: Item, codex_dir: Path) -> tuple[str, dict | None]:
+    """Print an HTML page to PDF with headless Edge or Chrome (set CODEX_BROWSER to choose)."""
+    browser = _browser()
+    if not browser:
+        return "no_browser", None
+    part = item.path(codex_dir).with_suffix(".pdf.part")
+    part.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        subprocess.run([browser, "--headless", "--disable-gpu", "--no-pdf-header-footer",
+                        "--virtual-time-budget=15000", f"--print-to-pdf={part}", item.url],
+                       capture_output=True, timeout=180)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        part.unlink(missing_ok=True)
+        return f"error: {type(exc).__name__}", None
+    if not part.exists():
+        return "print_failed", None
+    if part.stat().st_size > MAX_BYTES:
+        part.unlink()
+        return "too_large", None
+    return _finish(part, item, codex_dir)
+
+
+def _finish(part: Path, item: Item, codex_dir: Path) -> tuple[str, dict | None]:
+    path = item.path(codex_dir)
+    size = part.stat().st_size
     with part.open("rb") as handle:
         is_pdf = handle.read(5) == b"%PDF-"
     if not is_pdf:   # a login page or an HTML landing page instead of the document

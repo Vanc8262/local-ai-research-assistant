@@ -4,6 +4,7 @@
 
 [[question]]
 id = "python-315"
+codex = true
 topic = "python"
 text = "What are the main new features in the latest stable Python release?"
 expect = [["3.15"], ["lazy import", "lazy keyword"], ["UTF-8"]]
@@ -25,6 +26,7 @@ expect = [["operational excellence"], ["security"], ["reliability"], ["performan
 
 [[question]]
 id = "gguf-quants"
+codex = true
 topic = "local-models"
 text = "What do the GGUF quantization types Q4_K_M, Q5_K_M and Q8_0 mean in llama.cpp, and how do they trade size against quality?"
 expect = [["Q4_K_M"], ["Q8_0"], ["k-quant", "k quant", "K-quants"], ["perplexity", "quality"]]

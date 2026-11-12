@@ -1,5 +1,6 @@
 # Codex first wave. Official free sources only; sizes from HEAD requests on 2026-10-25.
-# kind = "pdf": direct download. kind = "html": doc site or HTML-only book, skipped for now.
+# kind = "pdf": direct download. kind = "page": one web page, printed to PDF by headless Edge/Chrome.
+# kind = "html": doc site or HTML-only book, skipped for now.
 
 # --- python ---
 [[item]]
@@ -9,7 +10,7 @@ title = "What's New In Python 3.15"
 authors = "Python Software Foundation"
 year = 2026
 url = "https://docs.python.org/3/whatsnew/3.15.html"
-kind = "html"
+kind = "page"
 licence = "PSF License (Python documentation)"
 bytes = 443961
 
@@ -308,13 +309,24 @@ licence = "MIT"
 bytes = 0
 
 [[item]]
+id = "llama-quantize-readme"
+topic = "local-models"
+title = "llama.cpp quantize README (quantization types, size and perplexity)"
+authors = "ggml-org contributors"
+year = 2026
+url = "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/quantize/README.md"
+kind = "page"
+licence = "MIT"
+bytes = 0
+
+[[item]]
 id = "gguf-spec"
 topic = "local-models"
 title = "GGUF file format specification"
 authors = "ggml-org contributors"
 year = 2023
-url = "https://github.com/ggml-org/ggml/blob/master/docs/gguf.md"
-kind = "html"
+url = "https://raw.githubusercontent.com/ggml-org/ggml/master/docs/gguf.md"
+kind = "page"
 licence = "MIT"
 bytes = 0
 

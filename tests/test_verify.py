@@ -197,6 +197,8 @@ def test_quote_matching_tolerates_formatting_but_not_invention():
     assert quote_in_source("3.15.0 Released [...] The default is None", page)         # elision
     assert not quote_in_source("Released on 19 Oct 2026 with the GIL removed entirely", page)
     assert not quote_in_source("short", page)
+    assert quote_in_source("support development and run workloads effectively",      # PDF ligature
+                           "The ability to support development and run \nworkloads eﬀectively")
 
 
 def test_sources_that_each_cover_part_of_a_list_are_judged_together(tmp_path):

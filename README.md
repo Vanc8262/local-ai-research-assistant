@@ -95,7 +95,7 @@ python -m assistant ask --public -t local -t gemini "Explain KV cache in one par
 python -m assistant search "llama.cpp KV cache quantization"
 python -m assistant show <run_id>                      # the logged steps of a run
 python -m assistant proxy                              # tiers as an OpenAI endpoint on http://127.0.0.1:8765/v1
-python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder
+python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder; "page" items are printed to PDF by headless Edge
 python -m assistant codex index                        # embed the codex PDFs (nomic-embed-text)
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
