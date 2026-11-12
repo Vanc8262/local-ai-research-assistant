@@ -311,6 +311,11 @@ def test_a_confident_decider_keeps_the_pass(tmp_path):
     assert result.summary()["doubted"] == 0
 
 
+def test_the_decider_overrules_below_p_0_8_only(tmp_path):
+    assert verify_with(tmp_path / "a", FakeDecider(p_true=0.85)).claims[0].verdict == "supported"
+    assert verify_with(tmp_path / "b", FakeDecider(p_true=0.75)).claims[0].verdict == "partial"
+
+
 def test_a_failing_decider_is_counted_not_trusted_silently(tmp_path):
     result = verify_with(tmp_path, FakeDecider(error="no logprobs"))
     assert result.claims[0].verdict == "supported"

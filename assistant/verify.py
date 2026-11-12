@@ -50,7 +50,7 @@ VERDICTS = ("supported", "partial", "unsupported", "unchecked")
 DOUBTED = "the decider doubts it"
 # shortcut: from 36 labelled decide cases (Gemma's confidence 0.93 when right, 0.33 when wrong);
 # re-check against hand-labelled claims once the eval has some.
-MIN_DECIDER_CONFIDENCE = 0.5
+MIN_DECIDER_P = 0.8   # from 88 hand-labelled claims: results/decider_threshold_2026-11-12.md
 NO_SOURCE = "no source has this number"
 
 PROMPT = """You check citations in a research report.
@@ -426,7 +426,7 @@ def _second_opinion(check: Check, claim: Claim, passages: list[str], decider) ->
         check.decider_error = decision.error[:200]
         return check
     check.decider_p = decision.p_true
-    if decision.answer != "true" or decision.confidence < MIN_DECIDER_CONFIDENCE:
+    if decision.answer != "true" or decision.p_true < MIN_DECIDER_P:
         check.verdict = "partial"
         check.reason = (f"{DOUBTED} (p {decision.p_true:.2f}, confidence {decision.confidence:.2f}); "
                         + check.reason)
