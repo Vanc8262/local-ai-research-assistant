@@ -320,6 +320,17 @@ licence = "MIT"
 bytes = 0
 
 [[item]]
+id = "k-quants-pr"
+topic = "local-models"
+title = "llama.cpp pull request 1684: k-quants (new quantization types, sizes and perplexity)"
+authors = "Iwan Kawrakow (ikawrakow)"
+year = 2023
+url = "https://github.com/ggml-org/llama.cpp/pull/1684"
+kind = "page"
+licence = "MIT"
+bytes = 0
+
+[[item]]
 id = "gguf-spec"
 topic = "local-models"
 title = "GGUF file format specification"
