@@ -99,6 +99,10 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
                      "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
+    pages_job = None
+    if search == "searxng" and settings.research.web_pages:
+        pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
+
     gateway = Gateway(settings, log, transport=transport)
     server = make_server(Proxy(settings, gateway, private=not public,
                                 local_temperature=settings.research.writer_temperature), port=0)
@@ -111,6 +115,9 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                                         private=not public, tavily_key=secret)}
     if codex_job:
         job["codex"] = codex_job
+    if pages_job:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
+        job["pages"] = pages_job
+        job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
            "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST": f"{settings.searxng_url},{proxy_url}"}
