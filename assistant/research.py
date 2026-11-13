@@ -28,6 +28,12 @@ from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .runlog import RunLog
 
+# For local writers: most claims the repair step removed were uncited or inferred
+# (results/stage2_eval_2026-11-12.md). LDR puts this at the top of its answer prompts.
+WRITER_RULES = ("End every sentence with the number of the source that states it, like [1]. "
+                "Write only what a source states in its own words; do not add background knowledge, "
+                "comparisons or conclusions that no source states. Do not comment on the sources or on "
+                "what they leave out. If the sources do not cover part of the question, leave that part out.")
 RUNNER = Path(__file__).with_name("ldr_runner.py")
 SEARCH_TOOLS = ("searxng", "tavily", "codex")
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
@@ -64,6 +70,8 @@ def build_overrides(settings: Settings, *, tier: str, search: str, proxy_url: st
         "search.iterations": research.iterations,
         "web.host": "127.0.0.1",   # LDR's default, 0.0.0.0, would expose its UI to the LAN
     }
+    if settings.tier(tier).kind == "local":
+        overrides["general.output_instructions"] = WRITER_RULES
     if search == "tavily":
         overrides["search.engine.web.tavily.api_key"] = tavily_key
     return overrides

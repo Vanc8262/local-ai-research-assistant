@@ -104,6 +104,7 @@ def test_overrides_point_ldr_at_the_proxy_and_stay_local(tmp_path):
     assert overrides["llm.openai_endpoint.url"] == "http://127.0.0.1:5555/v1"
     assert overrides["llm.require_local_endpoint"] is True and overrides["web.host"] == "127.0.0.1"
     assert "search.engine.web.tavily.api_key" not in overrides
+    assert "source" in overrides["general.output_instructions"]   # citation rules for the local writer
 
 
 def test_show_prints_research_steps(tmp_path, capsys):

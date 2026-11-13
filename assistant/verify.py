@@ -284,11 +284,12 @@ def _squash(text: str) -> str:
 
 
 def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
-    """True when every fragment of the quote (split at [...] or ...) is in the source, exactly
+    """True when every fragment of the quote (split at [...], ... or a line break, since a
+    quote of two table rows or list items skips what lies between) is in the source, exactly
     once spacing and punctuation are ignored, or as one run covering min_ratio of it. A quote
     stitched together from separate places, or invented, fails."""
     source = _squash(text)
-    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…", quote))
+    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…|\n", quote))
              if len(p) >= 12]
     if not parts:
         return False

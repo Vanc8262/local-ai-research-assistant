@@ -331,6 +331,17 @@ licence = "MIT"
 bytes = 0
 
 [[item]]
+id = "llama-quantize-types-2023"
+topic = "local-models"
+title = "llama.cpp quantize tool source, June 2023: each quantization type with its size, perplexity change and quality note"
+authors = "ggml-org contributors"
+year = 2023
+url = "https://raw.githubusercontent.com/ggml-org/llama.cpp/master-7487137/examples/quantize/quantize.cpp"
+kind = "page"
+licence = "MIT"
+bytes = 7611
+
+[[item]]
 id = "gguf-spec"
 topic = "local-models"
 title = "GGUF file format specification"

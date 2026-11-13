@@ -197,6 +197,9 @@ def test_quote_matching_tolerates_formatting_but_not_invention():
     assert quote_in_source("3.15.0 Released [...] The default is None", page)         # elision
     assert not quote_in_source("Released on 19 Oct 2026 with the GIL removed entirely", page)
     assert not quote_in_source("short", page)
+    rows = "PEP 661: Add sentinel built-in type\nPEP 686: UTF-8 by default\nPEP 814: Add frozendict built-in type"
+    assert quote_in_source("PEP 661: Add sentinel built-in type\nPEP 814: Add frozendict built-in type", rows)
+    assert not quote_in_source("PEP 661: Add sentinel built-in type\nPEP 999: Remove the GIL entirely", rows)
     assert quote_in_source("support development and run workloads effectively",      # PDF ligature
                            "The ability to support development and run \nworkloads eﬀectively")
 
