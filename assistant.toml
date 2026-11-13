@@ -19,6 +19,7 @@ iterations = 3
 timeout_s = 3600
 embed_model = "text-embedding-nomic-embed-text-v1.5"   # codex index embeddings, served by llama-swap
 codex_k = 8                                            # codex chunks returned per search
+tavily_fallback = true                                 # public questions only: ask Tavily when SearXNG returns nothing (needs TAVILY_API_KEY)
 web_pages = 6                                          # searxng results per search, each with page passages; 0 = snippets only
 writer_temperature = 0.3                               # local tiers while writing reports; steadier runs
 

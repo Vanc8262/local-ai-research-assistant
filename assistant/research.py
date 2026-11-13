@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -46,6 +47,7 @@ class ResearchResult:
     sources: list[dict] = field(default_factory=list)
     elapsed_s: float | None = None
     error: str | None = None
+    tavily_sources: int = 0   # sources the Tavily fallback supplied (see web_pages.py)
 
     @property
     def report_path(self) -> Path:
@@ -79,7 +81,10 @@ def build_overrides(settings: Settings, *, tier: str, search: str, proxy_url: st
 
 def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | None = None,
                  search: str = "searxng", public: bool = False, mode: str = "quick",
-                 runner: list[str] | None = None, transport=None) -> ResearchResult:
+                 runner: list[str] | None = None, transport=None,
+                 public_search: bool = False) -> ResearchResult:
+    """public_search: the question itself is public, so a search query may leave this PC
+    (the Tavily fallback) even though the prompt, and so the model tier, stays private."""
     tier = tier or settings.default_tier
     run_dir = Path(settings.runs_dir) / log.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -107,12 +112,26 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
                      "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
-    pages_job = None
+    page_search = None
     if search == "searxng" and settings.research.web_pages:
-        pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
+        # Only a public question may reach Tavily. A private one never gets the key.
+        fallback_key = (os.environ.get(CLOUD_SEARCH["tavily"], "")
+                        if (public or public_search) and settings.research.tavily_fallback else "")
+        secret = secret or fallback_key
+
+        def page_search(text: str) -> list[dict]:
+            from .web_pages import search_pages   # see web_pages.py for why this runs here, not in LDR
+            started = time.perf_counter()
+            results = search_pages(settings.searxng_url, text, settings.research.web_pages,
+                                   transport=transport, tavily_key=fallback_key)
+            engine = results[0]["engine"] if results else "none"
+            log.step("search", tier=engine, tier_kind="cloud" if engine == "tavily" else "local", query=text,
+                     outcome="ok" if results else "empty", hits=len(results),
+                     total_s=round(time.perf_counter() - started, 3))
+            return results
 
     gateway = Gateway(settings, log, transport=transport)
-    server = make_server(Proxy(settings, gateway, private=not public,
+    server = make_server(Proxy(settings, gateway, private=not public, search=page_search,
                                 local_temperature=settings.research.writer_temperature), port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     host, port = server.server_address[:2]
@@ -123,8 +142,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                                         private=not public, tavily_key=secret)}
     if codex_job:
         job["codex"] = codex_job
-    if pages_job:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
-        job["pages"] = pages_job
+    if page_search:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
+        job["pages"] = {"search_url": f"{proxy_url}/search"}
         job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
@@ -157,8 +176,10 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         result.report_path.write_text(report_markdown(query, result), encoding="utf-8")
     (run_dir / "sources.json").write_text(json.dumps(result.sources, ensure_ascii=False, indent=2),
                                           encoding="utf-8")
+    fallback = sum((s.get("metadata") or {}).get("engine") == "tavily" for s in result.sources)
+    result.tavily_sources = fallback
     log.step("research", **base, outcome="error" if result.error or not result.summary else "ok",
-             elapsed_s=result.elapsed_s, n_sources=len(result.sources), report_chars=len(result.summary),
+             elapsed_s=result.elapsed_s, n_sources=len(result.sources), tavily_fallback_sources=fallback, report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
     return result
 

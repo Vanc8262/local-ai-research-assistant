@@ -13,10 +13,24 @@ search:
     - html
     - json
 
-# A backup for when Brave, DuckDuckGo or Google suspend this instance for too many
-# requests (a day of evals did, 2026-11-12). Bing is off by default in SearXNG. Tested
-# 2026-11-13 and not usable from here: Qwant (access denied), Yahoo and Yep (HTTP errors),
-# Mojeek and Startpage (inactive in SearXNG: proof-of-work CAPTCHAs).
+# No backup engine is enabled. Tested 2026-11-13 after Brave, DuckDuckGo and Google
+# suspended this instance: Bing answers but returns dictionary pages for a research
+# question, Qwant denies access, Yahoo and Yep give HTTP errors, and SearXNG marks Mojeek
+# and Startpage inactive (proof-of-work CAPTCHAs).
+
+# Topic engines that scrape no search engine (reports/Free web search options 2026.md).
+# They sit in the it and science categories, which web_pages.py asks for. Google Scholar
+# is turned off because it scrapes Google from the address Google already blocks.
 engines:
-  - name: bing
+  - name: hackernews
     disabled: false
+  - name: huggingface
+    disabled: false
+  - name: openalex
+    disabled: false
+  - name: crossref
+    disabled: false
+  - name: mwmbl
+    disabled: false
+  - name: google scholar
+    disabled: true

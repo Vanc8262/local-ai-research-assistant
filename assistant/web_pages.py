@@ -6,19 +6,32 @@ sentences per source and left expected facts out (Tavily, in hybrid mode, return
 the passages of it that share most words with the query: the same windows the verifier
 later checks the claims against.
 
-Like codex_index.py it runs in LDR's venv, started by ldr_runner.py, which puts the
-repo on sys.path so the page-to-text and passage code in verify.py is shared.
+The searching happens in the assistant's own process: research.py hands `search_pages`
+to the gateway proxy, which serves it at POST /search. The retriever that LDR loads
+(`load_retriever`, started by ldr_runner.py) only calls that loopback address. LDR's
+egress guard blocks every public host during a run it sees as private, and this way
+the search, the Tavily key and the decision about what may leave the PC all stay on
+our side of the proxy, where each search is logged as a step.
 """
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
 
 from assistant.verify import best_passages, html_to_text
 
-USER_AGENT = "Mozilla/5.0 (compatible; local-ai-research-assistant/0.1; personal research)"
+USER_AGENT = "Mozilla/5.0 (compatible; research-assistant/0.1)"
 MAX_PAGE_BYTES = 2 * 2**20
+# Engines that scrape no search engine, so they answer when Brave, Google and DuckDuckGo
+# have suspended the instance. Weaker on plain-language questions; best for papers.
+TOPIC_ENGINES = "arxiv,openalex,mwmbl,wikipedia,github,stackoverflow,hackernews"
+SEARCH_TIMEOUT_S = 30.0   # SearXNG waits on slow or rate-limited engines; pages keep the 10 s default
+TAVILY_URL = "https://api.tavily.com/search"
+MIN_GAP_S = 4.0   # between SearXNG queries: LDR fires several at once and Brave answers 429
+_gate, _last = threading.Lock(), [0.0]
 
 
 def page_text(client: httpx.Client, url: str) -> str:
@@ -34,22 +47,52 @@ def page_text(client: httpx.Client, url: str) -> str:
         return ""
 
 
-def search_pages(searxng_url: str, query: str, k: int = 6, transport=None) -> list[dict]:
-    """[{title, url, text}]: the top k results, each with its snippet and best page passages.
-    A page that cannot be fetched keeps its snippet alone."""
+def tavily_hits(client: httpx.Client, key: str, query: str, k: int) -> list[dict]:
+    try:
+        resp = client.post(TAVILY_URL, json={"query": query, "max_results": k},
+                           headers={"Authorization": f"Bearer {key}"}, timeout=SEARCH_TIMEOUT_S)
+        resp.raise_for_status()
+        return [{"title": r.get("title", ""), "url": r["url"], "content": r.get("content", "")}
+                for r in resp.json().get("results", []) if r.get("url")][:k]
+    except (httpx.HTTPError, ValueError):
+        return []
+
+
+def searxng_hits(client: httpx.Client, searxng_url: str, query: str, k: int, engines: str = "") -> list[dict]:
+    params = {"q": query, "format": "json", **({"engines": engines} if engines else {})}
+    try:   # a timeout or an error counts as "no results", so the next source in line is asked
+        with _gate:   # one query at a time, spaced out
+            time.sleep(max(0.0, _last[0] + MIN_GAP_S - time.monotonic()))
+            resp = client.get(f"{searxng_url.rstrip('/')}/search", params=params, timeout=SEARCH_TIMEOUT_S)
+            _last[0] = time.monotonic()
+        resp.raise_for_status()
+        return [h for h in resp.json().get("results", []) if h.get("url")][:k]
+    except (httpx.HTTPError, ValueError):
+        return []
+
+
+def search_pages(searxng_url: str, query: str, k: int = 6, transport=None, tavily_key: str = "") -> list[dict]:
+    """[{title, url, text, engine}]: the top k results, each with its snippet and best page
+    passages. A page that cannot be fetched keeps its snippet alone. If SearXNG's general
+    engines have no results (they suspend it under load), Tavily is asked when a key was
+    passed, which research.py does only for public questions; failing that, SearXNG's
+    topic engines are."""
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True,
                       headers={"User-Agent": USER_AGENT}, transport=transport) as client:
-        resp = client.get(f"{searxng_url.rstrip('/')}/search", params={"q": query, "format": "json"})
-        resp.raise_for_status()
-        hits = [h for h in resp.json().get("results", []) if h.get("url")][:k]
+        hits, engine = searxng_hits(client, searxng_url, query, k), "searxng"
+        if not hits and tavily_key:
+            hits, engine = tavily_hits(client, tavily_key, query, k), "tavily"
+        if not hits:   # last resort, and the only one for a private question
+            hits, engine = searxng_hits(client, searxng_url, query, k, engines=TOPIC_ENGINES), "searxng-topic"
         with ThreadPoolExecutor(max_workers=max(len(hits), 1)) as pool:
             pages = list(pool.map(lambda h: page_text(client, h["url"]), hits))
-    return [{"title": hit.get("title", ""), "url": hit["url"],
+    return [{"title": hit.get("title", ""), "url": hit["url"], "engine": engine,
              "text": "\n...\n".join([hit.get("content", "")] + (best_passages(query, page) if page else []))}
             for hit, page in zip(hits, pages)]
 
 
-def load_retriever(searxng_url: str, k: int = 6):
+def load_retriever(search_url: str):
+    """For LDR: a retriever that asks the gateway proxy's /search (see the module docstring)."""
     from typing import Any
 
     from langchain_core.documents import Document
@@ -57,11 +100,17 @@ def load_retriever(searxng_url: str, k: int = 6):
 
     class PageRetriever(BaseRetriever):
         url: str
-        k: int
         transport: Any = None
 
         def _get_relevant_documents(self, query, *, run_manager=None):
-            return [Document(page_content=r["text"], metadata={"title": r["title"], "source": r["url"]})
-                    for r in search_pages(self.url, query, self.k, self.transport)]
+            return [Document(page_content=r["text"], metadata={"title": r["title"], "source": r["url"],
+                                                             "engine": r["engine"]})
+                    for r in self._ask(query)]
 
-    return PageRetriever(url=searxng_url, k=k)
+        def _ask(self, query):
+            with httpx.Client(timeout=300.0, transport=self.transport) as client:   # queries queue 4 s apart
+                resp = client.post(self.url, json={"query": query})
+                resp.raise_for_status()
+                return resp.json()["results"]
+
+    return PageRetriever(url=search_url)
