@@ -21,6 +21,9 @@ from assistant.verify import best_passages, html_to_text
 
 USER_AGENT = "Mozilla/5.0 (compatible; research-assistant/0.1)"
 MAX_PAGE_BYTES = 2 * 2**20
+# Engines that scrape no search engine, so they answer when Brave, Google and DuckDuckGo
+# have suspended the instance. Weaker on plain-language questions; best for papers.
+TOPIC_ENGINES = "arxiv,openalex,mwmbl,wikipedia,github,stackoverflow,hackernews"
 TAVILY_URL = "https://api.tavily.com/search"
 MIN_GAP_S = 4.0   # between SearXNG queries: LDR fires several at once and Brave answers 429
 _gate, _last = threading.Lock(), [0.0]
@@ -47,23 +50,29 @@ def tavily_hits(client: httpx.Client, key: str, query: str, k: int) -> list[dict
             for r in resp.json().get("results", []) if r.get("url")][:k]
 
 
+def searxng_hits(client: httpx.Client, searxng_url: str, query: str, k: int, engines: str = "") -> list[dict]:
+    params = {"q": query, "format": "json", **({"engines": engines} if engines else {})}
+    with _gate:   # one query at a time, spaced out
+        time.sleep(max(0.0, _last[0] + MIN_GAP_S - time.monotonic()))
+        resp = client.get(f"{searxng_url.rstrip('/')}/search", params=params)
+        _last[0] = time.monotonic()
+    resp.raise_for_status()
+    return [h for h in resp.json().get("results", []) if h.get("url")][:k]
+
+
 def search_pages(searxng_url: str, query: str, k: int = 6, transport=None, tavily_key: str = "") -> list[dict]:
     """[{title, url, text, engine}]: the top k results, each with its snippet and best page
-    passages. A page that cannot be fetched keeps its snippet alone. If SearXNG has no
-    results (its engines suspend it under load) and a Tavily key was passed, Tavily is
-    asked instead; research.py passes the key only for public questions."""
+    passages. A page that cannot be fetched keeps its snippet alone. If SearXNG's general
+    engines have no results (they suspend it under load), Tavily is asked when a key was
+    passed, which research.py does only for public questions; failing that, SearXNG's
+    topic engines are."""
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True,
                       headers={"User-Agent": USER_AGENT}, transport=transport) as client:
-        with _gate:   # one query at a time, spaced out
-            time.sleep(max(0.0, _last[0] + MIN_GAP_S - time.monotonic()))
-            resp = client.get(f"{searxng_url.rstrip('/')}/search", params={"q": query, "format": "json"})
-            _last[0] = time.monotonic()
-        hits = [h for h in resp.json().get("results", []) if h.get("url")][:k] if resp.status_code == 200 else []
-        engine = "searxng"
+        hits, engine = searxng_hits(client, searxng_url, query, k), "searxng"
         if not hits and tavily_key:
             hits, engine = tavily_hits(client, tavily_key, query, k), "tavily"
-        elif not hits:
-            resp.raise_for_status()
+        if not hits:   # last resort, and the only one for a private question
+            hits, engine = searxng_hits(client, searxng_url, query, k, engines=TOPIC_ENGINES), "searxng-topic"
         with ThreadPoolExecutor(max_workers=max(len(hits), 1)) as pool:
             pages = list(pool.map(lambda h: page_text(client, h["url"]), hits))
     return [{"title": hit.get("title", ""), "url": hit["url"], "engine": engine,

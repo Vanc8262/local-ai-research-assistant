@@ -136,3 +136,17 @@ def test_the_tavily_fallback_key_goes_to_public_searxng_research_only(tmp_path, 
     assert "key=***" in public.sources[0]["snippet"]                # passed, and scrubbed from what is saved
     for path in [log.path, *public.run_dir.iterdir()]:
         assert "tvly-secret" not in path.read_text(encoding="utf-8")
+
+
+def test_a_public_question_may_use_the_fallback_while_the_prompt_stays_private(tmp_path, monkeypatch):
+    script = tmp_path / "echo_ldr.py"
+    script.write_text(FAKE_LDR.replace('echo = o.get("search.engine.web.tavily.api_key", "")',
+                                       'echo = "key=" + job.get("pages", {}).get("tavily_key", "none") '
+                                       '+ " local=" + str(o["llm.require_local_endpoint"])'), encoding="utf-8")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
+    settings = settings_for(tmp_path)
+    result = run_research(settings, "q", RunLog(settings.runs_dir), runner=[sys.executable, str(script)],
+                          transport=upstream([]), public_search=True)
+    assert "key=*** local=True" in result.sources[0]["snippet"]
+    with pytest.raises(PrivacyError):   # public_search never unlocks a cloud model
+        run_research(settings, "q", RunLog(settings.runs_dir), tier="gemini", runner=["never-run"], public_search=True)

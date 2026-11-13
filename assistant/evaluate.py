@@ -52,7 +52,7 @@ FIELDS = ("question", "mode", "run", "outcome", "research_s", "verify_s", "repai
           "accuracy", "supported", "partial", "unsupported", "uncited", "facts", "claims_before",
           "coverage_before", "accuracy_before", "facts_before", "cited", "rewritten", "removed",
           "removed_share", "doubted", "decider_errors", "min_free_ram_mb", "local_tokens", "cloud_tokens",
-          "gate", "run_id", "error")
+          "gate", "run_id", "error", "tavily_sources")
 
 
 @dataclass
@@ -137,12 +137,16 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
     label, started = ram.label, time.perf_counter()
     ram.label = f"{label}: research"
     try:
+        # Eval questions are public, so local mode may use the Tavily fallback when SearXNG
+        # returns nothing. The model still runs locally; tavily_sources records the use.
         result = run_research(settings, question.text, log, tier=tier, search=search, public=public,
-                              runner=runner, transport=transport)
+                              runner=runner, transport=transport, public_search=True)
     except Exception as exc:   # a blocked or unready mode is a result too; keep going
         return {**row, "outcome": "not_run", "error": f"{type(exc).__name__}: {exc}"}
     row["research_s"] = round(time.perf_counter() - started, 1)
-    row["sources"] = len(result.sources)
+    row["sources"], row["tavily_sources"] = len(result.sources), result.tavily_sources
+    if search != "codex" and result.summary and not result.sources:   # blocked search, not a bad report
+        return {**row, "outcome": "no_sources", "error": "the search returned nothing", **_tokens(log)}
     if not result.summary:
         return {**row, "outcome": "no_report", "error": result.error, **_tokens(log)}
 
@@ -232,6 +236,10 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
                          f"(before {mean('accuracy_before'):.0%}), mean facts {mean('facts'):.0%} "
                          f"(before {mean('facts_before'):.0%}), mean claims removed {mean('removed_share'):.0%}, "
                          f"{sum(r['gate'] == 'pass' for r in done)} pass the gate.")
+        used = [r for r in done if int(r.get("tavily_sources") or 0)]
+        if used:
+            lines.append(f"Tavily fallback (SearXNG returned nothing): {len(used)} of these reports used it, "
+                         f"for {sum(int(r['tavily_sources']) for r in used)} sources in all.")
         both = {}
         for r in done:
             both.setdefault(r["question"], []).append(r["gate"] == "pass")

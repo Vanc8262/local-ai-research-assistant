@@ -46,6 +46,7 @@ class ResearchResult:
     sources: list[dict] = field(default_factory=list)
     elapsed_s: float | None = None
     error: str | None = None
+    tavily_sources: int = 0   # sources the Tavily fallback supplied (see web_pages.py)
 
     @property
     def report_path(self) -> Path:
@@ -79,7 +80,10 @@ def build_overrides(settings: Settings, *, tier: str, search: str, proxy_url: st
 
 def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | None = None,
                  search: str = "searxng", public: bool = False, mode: str = "quick",
-                 runner: list[str] | None = None, transport=None) -> ResearchResult:
+                 runner: list[str] | None = None, transport=None,
+                 public_search: bool = False) -> ResearchResult:
+    """public_search: the question itself is public, so a search query may leave this PC
+    (the Tavily fallback) even though the prompt, and so the model tier, stays private."""
     tier = tier or settings.default_tier
     run_dir = Path(settings.runs_dir) / log.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +114,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     pages_job = None
     if search == "searxng" and settings.research.web_pages:
         pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
-        if public and settings.research.tavily_fallback:
+        if (public or public_search) and settings.research.tavily_fallback:
             # Only a public question may reach Tavily. A private one gets no results instead.
             secret = os.environ.get(CLOUD_SEARCH["tavily"], "")
             pages_job["tavily_key"] = secret
@@ -162,6 +166,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     (run_dir / "sources.json").write_text(json.dumps(result.sources, ensure_ascii=False, indent=2),
                                           encoding="utf-8")
     fallback = sum((s.get("metadata") or {}).get("engine") == "tavily" for s in result.sources)
+    result.tavily_sources = fallback
     log.step("research", **base, outcome="error" if result.error or not result.summary else "ok",
              elapsed_s=result.elapsed_s, n_sources=len(result.sources), tavily_fallback_sources=fallback, report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
