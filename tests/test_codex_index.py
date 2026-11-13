@@ -161,3 +161,25 @@ def test_keyword_terms_split_numbers_from_units_and_fusion_rewards_agreement():
     fused = fuse([vector, keyword], 3)
     assert fused[0] in (a, b) and {x.page_content for x in fused} == {"48GB headline", "NF4", "appendix"}
     assert len(fuse([[a, a], [a]], 5)) == 1
+
+
+def test_hits_are_widened_with_their_neighbours_from_the_same_file():
+    from dataclasses import dataclass, field
+
+    from assistant.codex_index import widen
+
+    @dataclass
+    class Doc:
+        page_content: str
+        metadata: dict = field(default_factory=dict)
+
+    def doc(file, page, text):
+        return Doc(text, {"source": f"file:///{file}.pdf#page={page}", "codex_id": file})
+    overlap = "the security pillar describes how to take advantage of cloud "
+    chunks = [doc("aws", 6, "intro"), doc("aws", 7, "Table 1. Operational excellence ... " + overlap),
+              doc("aws", 8, overlap + "technologies to protect data"), doc("git", 1, "git basics")]
+    (wide,) = widen([chunks[1], chunks[2]], chunks)   # the second hit is inside the first one's window
+    assert wide.page_content == "intro\nTable 1. Operational excellence ... " + overlap + "technologies to protect data"
+    assert wide.metadata["source"].endswith("aws.pdf#page=7")
+    (edge,) = widen([chunks[3]], chunks)              # never borrows from another file
+    assert edge.page_content == "git basics"

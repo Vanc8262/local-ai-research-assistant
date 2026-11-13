@@ -197,6 +197,11 @@ def test_quote_matching_tolerates_formatting_but_not_invention():
     assert quote_in_source("3.15.0 Released [...] The default is None", page)         # elision
     assert not quote_in_source("Released on 19 Oct 2026 with the GIL removed entirely", page)
     assert not quote_in_source("short", page)
+    rows = "PEP 661: Add sentinel built-in type\nPEP 686: UTF-8 by default\nPEP 814: Add frozendict built-in type"
+    assert quote_in_source("PEP 661: Add sentinel built-in type\nPEP 814: Add frozendict built-in type", rows)
+    assert not quote_in_source("PEP 661: Add sentinel built-in type\nPEP 999: Remove the GIL entirely", rows)
+    assert quote_in_source("support development and run workloads effectively",      # PDF ligature
+                           "The ability to support development and run \nworkloads eﬀectively")
 
 
 def test_sources_that_each_cover_part_of_a_list_are_judged_together(tmp_path):
@@ -307,6 +312,11 @@ def test_a_confident_decider_keeps_the_pass(tmp_path):
     result = verify_with(tmp_path, FakeDecider(p_true=0.97))
     assert result.claims[0].verdict == "supported" and result.claims[0].checks[0].decider_p == 0.97
     assert result.summary()["doubted"] == 0
+
+
+def test_the_decider_overrules_below_p_0_8_only(tmp_path):
+    assert verify_with(tmp_path / "a", FakeDecider(p_true=0.85)).claims[0].verdict == "supported"
+    assert verify_with(tmp_path / "b", FakeDecider(p_true=0.75)).claims[0].verdict == "partial"
 
 
 def test_a_failing_decider_is_counted_not_trusted_silently(tmp_path):

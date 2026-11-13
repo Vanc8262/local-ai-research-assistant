@@ -95,7 +95,7 @@ python -m assistant ask --public -t local -t gemini "Explain KV cache in one par
 python -m assistant search "llama.cpp KV cache quantization"
 python -m assistant show <run_id>                      # the logged steps of a run
 python -m assistant proxy                              # tiers as an OpenAI endpoint on http://127.0.0.1:8765/v1
-python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder
+python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder; "page" items are printed to PDF by headless Edge
 python -m assistant codex index                        # embed the codex PDFs (nomic-embed-text)
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
@@ -120,7 +120,7 @@ Tools that make their own model calls, such as Local Deep Research in Stage 2, p
 
 `repair` handles each claim that failed `verify`. If another likely source supports the claim as written, the claim cites that source instead. Otherwise a cited claim may be shortened to the part its sources support, and a claim that cannot be saved is removed. The report is then checked again, and whatever still fails is removed. A rewrite may only delete words, because a source can be the one that is wrong: an old page counting five AWS pillars must not turn a correct "six" into a wrong "five" that passes the check. The original is kept as `report.original.md`, and `repair.md` lists every change. If the model cannot answer, the repair reloads it and tries once more, then stops and puts the report back. Removing claims always raises the citation scores, so `eval` also records the claims removed and the expected facts before and after, and a report fails the gate if repair removed more than 15% of its claims or it has fewer than 75% of the question's expected facts. Passing shows that the checker accepts what is left, not that every sentence is true: its model is sometimes generous, and a hand review of the changes is still worthwhile.
 
-`verify` also asks the decider (`assistant/decide.py`, the same local model) whether the passages support each claim the model passed. A pass it doubts (it answers false, or its confidence is below 0.5) drops to partial, and `verification.md` counts these. In a hand test it caught 3 of 5 known weak passes and kept both good ones. `eval` runs every question twice, and also in codex mode for the questions marked `codex = true`. It writes free RAM and the top processes every 15 seconds to `ram.csv`, with the lowest point in `summary.md`.
+`verify` also asks the decider (`assistant/decide.py`, the same local model) whether the passages support each claim the model passed. A pass it doubts (its probability that the claim is supported is below 0.8; see [the threshold review](results/decider_threshold_2026-11-12.md)) drops to partial, and `verification.md` counts these. In a hand test it caught 3 of 5 known weak passes and kept both good ones. `eval` runs every question twice, and also in codex mode for the questions marked `codex = true`. It writes free RAM and the top processes every 15 seconds to `ram.csv`, with the lowest point in `summary.md`.
 
 ## Stage 0 results
 

@@ -127,3 +127,33 @@ model = "m"
 def test_shipped_catalog_loads():
     items = load_catalog(Path(__file__).resolve().parent.parent / "codex" / "catalog.toml")
     assert len(items) >= 20 and all(item.licence for item in items)
+
+
+def test_page_items_are_printed_to_pdf_by_the_browser(tmp_path, monkeypatch):
+    import subprocess
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        out = next(a for a in cmd if a.startswith("--print-to-pdf=")).split("=", 1)[1]
+        Path(out).write_bytes(PDF)
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setenv("CODEX_BROWSER", str(tmp_path / "edge.exe"))
+    (tmp_path / "edge.exe").write_bytes(b"")
+    monkeypatch.setattr("assistant.codex.subprocess.run", fake_run)
+    catalog = write_catalog(tmp_path, '''
+[[item]]
+id = "whatsnew-3.15"
+topic = "python"
+title = "What's New In Python 3.15"
+url = "https://docs.python.org/3.15/whatsnew/3.15.html"
+kind = "page"
+''')
+    codex = tmp_path / "codex"
+    outcomes = fetch(load_catalog(catalog), codex, RunLog(tmp_path / "runs"), delay_s=0, transport=server([]))
+
+    assert [outcome for _, outcome in outcomes] == ["downloaded"]
+    assert calls[0][0] == str(tmp_path / "edge.exe") and calls[0][-1].endswith("3.15.html")
+    assert (codex / "python" / "whatsnew-3.15.pdf").read_bytes() == PDF
+    assert read_manifest(codex)["whatsnew-3.15"]["file"] == "python/whatsnew-3.15.pdf"

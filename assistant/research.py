@@ -28,6 +28,12 @@ from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .runlog import RunLog
 
+# For local writers: most claims the repair step removed were uncited or inferred
+# (results/stage2_eval_2026-11-12.md). LDR puts this at the top of its answer prompts.
+WRITER_RULES = ("End every sentence with the number of the source that states it, like [1]. "
+                "Write only what a source states in its own words; do not add background knowledge, "
+                "comparisons or conclusions that no source states. Do not comment on the sources or on "
+                "what they leave out. If the sources do not cover part of the question, leave that part out.")
 RUNNER = Path(__file__).with_name("ldr_runner.py")
 SEARCH_TOOLS = ("searxng", "tavily", "codex")
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
@@ -64,6 +70,8 @@ def build_overrides(settings: Settings, *, tier: str, search: str, proxy_url: st
         "search.iterations": research.iterations,
         "web.host": "127.0.0.1",   # LDR's default, 0.0.0.0, would expose its UI to the LAN
     }
+    if settings.tier(tier).kind == "local":
+        overrides["general.output_instructions"] = WRITER_RULES
     if search == "tavily":
         overrides["search.engine.web.tavily.api_key"] = tavily_key
     return overrides
@@ -99,6 +107,10 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
                      "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
+    pages_job = None
+    if search == "searxng" and settings.research.web_pages:
+        pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
+
     gateway = Gateway(settings, log, transport=transport)
     server = make_server(Proxy(settings, gateway, private=not public,
                                 local_temperature=settings.research.writer_temperature), port=0)
@@ -111,6 +123,9 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                                         private=not public, tavily_key=secret)}
     if codex_job:
         job["codex"] = codex_job
+    if pages_job:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
+        job["pages"] = pages_job
+        job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
            "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST": f"{settings.searxng_url},{proxy_url}"}

@@ -54,8 +54,9 @@ def load_retriever(index_dir: str, url: str, model: str, k: int = 8):
     from langchain_community.vectorstores import FAISS
     store = FAISS.load_local(index_dir, embeddings(url, model), allow_dangerous_deserialization=True)
     vector = store.as_retriever(search_type="mmr", search_kwargs={"k": k, "fetch_k": 4 * k, "lambda_mult": 0.7})
-    keyword = BM25Retriever.from_documents(list(store.docstore._dict.values()), k=k, preprocess_func=terms)
-    return hybrid_retriever(vector, keyword, k)
+    chunks = list(store.docstore._dict.values())   # in document order: file, page, position
+    keyword = BM25Retriever.from_documents(chunks, k=k, preprocess_func=terms)
+    return hybrid_retriever(vector, keyword, k, chunks)
 
 
 def terms(text: str) -> list[str]:
@@ -74,7 +75,38 @@ def fuse(rankings: list[list], k: int, rrf: int = 60) -> list:
     return [docs[key] for key in sorted(scores, key=scores.get, reverse=True)[:k]]
 
 
-def hybrid_retriever(vector, keyword, k: int):
+def join(left: str, right: str) -> str:
+    """Append a chunk to the one before it, dropping the overlap the splitter repeated."""
+    for size in range(min(len(left), len(right), 2 * CHUNK_OVERLAP), 20, -1):
+        if left.endswith(right[:size]):
+            return left + right[size:]
+    return left + "\n" + right
+
+
+def widen(hits: list, chunks: list) -> list:
+    """Each hit with the chunk before and after it from the same file, so a table or list
+    cut by a chunk or page boundary reaches the model whole. A hit already inside an
+    earlier hit's window is dropped. The citation stays the hit's own page."""
+    where = {(c.metadata.get("source"), c.page_content): i for i, c in enumerate(chunks)}
+    out, used = [], set()
+    for hit in hits:
+        i = where.get((hit.metadata.get("source"), hit.page_content))
+        if i is None:
+            out.append(hit)
+            continue
+        if i in used:
+            continue
+        span = [j for j in (i - 1, i, i + 1) if 0 <= j < len(chunks)
+                and chunks[j].metadata.get("codex_id") == hit.metadata.get("codex_id")]
+        used.update(span)
+        text = chunks[span[0]].page_content
+        for j in span[1:]:
+            text = join(text, chunks[j].page_content)
+        out.append(type(hit)(page_content=text, metadata=hit.metadata))
+    return out
+
+
+def hybrid_retriever(vector, keyword, k: int, chunks: list | None = None):
     from typing import Any
 
     from langchain_core.retrievers import BaseRetriever
@@ -83,11 +115,12 @@ def hybrid_retriever(vector, keyword, k: int):
         vector: Any
         keyword: Any
         k: int
+        chunks: Any
 
         def _get_relevant_documents(self, query, *, run_manager=None):
-            return fuse([self.vector.invoke(query), self.keyword.invoke(query)], self.k)
+            return widen(fuse([self.vector.invoke(query), self.keyword.invoke(query)], self.k), self.chunks)
 
-    return HybridRetriever(vector=vector, keyword=keyword, k=k)
+    return HybridRetriever(vector=vector, keyword=keyword, k=k, chunks=chunks or [])
 
 
 def page_documents(codex_dir: Path, row: dict) -> list:

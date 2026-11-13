@@ -12,3 +12,11 @@ search:
   formats:
     - html
     - json
+
+# A backup for when Brave, DuckDuckGo or Google suspend this instance for too many
+# requests (a day of evals did, 2026-11-12). Bing is off by default in SearXNG. Tested
+# 2026-11-13 and not usable from here: Qwant (access denied), Yahoo and Yep (HTTP errors),
+# Mojeek and Startpage (inactive in SearXNG: proof-of-work CAPTCHAs).
+engines:
+  - name: bing
+    disabled: false

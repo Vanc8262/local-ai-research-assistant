@@ -18,6 +18,7 @@ from __future__ import annotations
 import difflib
 import json
 import re
+import unicodedata
 from dataclasses import asdict, dataclass, field
 from html.parser import HTMLParser
 from pathlib import Path
@@ -49,7 +50,7 @@ VERDICTS = ("supported", "partial", "unsupported", "unchecked")
 DOUBTED = "the decider doubts it"
 # shortcut: from 36 labelled decide cases (Gemma's confidence 0.93 when right, 0.33 when wrong);
 # re-check against hand-labelled claims once the eval has some.
-MIN_DECIDER_CONFIDENCE = 0.5
+MIN_DECIDER_P = 0.8   # from 88 hand-labelled claims: results/decider_threshold_2026-11-12.md
 NO_SOURCE = "no source has this number"
 
 PROMPT = """You check citations in a research report.
@@ -278,15 +279,17 @@ def parse_verdict(answer: str) -> dict:
 def _squash(text: str) -> str:
     """Letters and digits only: ignores spacing, punctuation, table pipes and quote styles."""
     text = re.sub(r"\[\d{1,2}:\d{2}(?::\d{2})?\]", " ", text)   # video transcript timestamps
+    text = unicodedata.normalize("NFKC", text)   # PDF ligatures: "eﬀectively" -> "effectively"
     return re.sub(r"[^a-z0-9]+", "", text.lower())
 
 
 def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
-    """True when every fragment of the quote (split at [...] or ...) is in the source, exactly
+    """True when every fragment of the quote (split at [...], ... or a line break, since a
+    quote of two table rows or list items skips what lies between) is in the source, exactly
     once spacing and punctuation are ignored, or as one run covering min_ratio of it. A quote
     stitched together from separate places, or invented, fails."""
     source = _squash(text)
-    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…", quote))
+    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…|\n", quote))
              if len(p) >= 12]
     if not parts:
         return False
@@ -424,7 +427,7 @@ def _second_opinion(check: Check, claim: Claim, passages: list[str], decider) ->
         check.decider_error = decision.error[:200]
         return check
     check.decider_p = decision.p_true
-    if decision.answer != "true" or decision.confidence < MIN_DECIDER_CONFIDENCE:
+    if decision.answer != "true" or decision.p_true < MIN_DECIDER_P:
         check.verdict = "partial"
         check.reason = (f"{DOUBTED} (p {decision.p_true:.2f}, confidence {decision.confidence:.2f}); "
                         + check.reason)
