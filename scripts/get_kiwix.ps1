@@ -17,16 +17,16 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $base = "https://download.kiwix.org/zim"
-$wanted = @(
-    @("wikipedia", "wikipedia_en_all_nopic"),
-    @("stack_exchange", "ai.stackexchange.com_en_all"),
-    @("stack_exchange", "datascience.stackexchange.com_en_all"),
-    @("stack_exchange", "stats.stackexchange.com_en_all")
-)
+# Smallest first, so the manuals and Stack Exchange sites serve while Wikipedia downloads.
+$wanted = @()
 foreach ($doc in "python", "pandas", "numpy", "scikit-learn", "pytorch", "docker", "kubernetes",
                  "terraform", "git", "postgresql", "fastapi") {
     $wanted += , @("devdocs", "devdocs_en_$doc")
 }
+$wanted += , @("stack_exchange", "ai.stackexchange.com_en_all")
+$wanted += , @("stack_exchange", "datascience.stackexchange.com_en_all")
+$wanted += , @("stack_exchange", "stats.stackexchange.com_en_all")
+$wanted += , @("wikipedia", "wikipedia_en_all_nopic")
 if ($WithStackOverflow) { $wanted += , @("stack_exchange", "stackoverflow.com_en_all") }
 
 New-Item -ItemType Directory -Force $To | Out-Null
