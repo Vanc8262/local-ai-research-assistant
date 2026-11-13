@@ -163,7 +163,7 @@ Stage 3 build, each step a PR with tests that run without a model:
 5. The task loop with Aider through the proxy, stop reasons and logging; tested against `tests/fake_model.py`.
 6. The remaining 14 tasks.
 7. `assistant code eval` and the write-up format.
-8. Phases 1 to 4 on the PC. **The first real run needs Van's go-ahead**, as CLAUDE.md requires for model-written code, even though it now runs sandboxed.
+8. Phases 1 to 4 on the PC. Covered by Van's go-ahead for sandboxed runs (section 10).
 
 Alongside, not blocking: the Heretic bench and the vault picks for Gemma and Qwen.
 
@@ -173,10 +173,10 @@ Alongside, not blocking: the Heretic bench and the vault picks for Gemma and Qwe
 
 **Left to the builder, recorded when made:** Aider's edit format (from the smoke run); the exact Aider flags; the contents of the 20 tasks within the mix above; the sandbox limits if 768 MB or 120 s prove too tight; how the loop's code is split into modules.
 
-## 10. Open question for Van
+## 10. When real models may run (answered)
 
-**When may real models run?** Three steps need a real model before phase 1: the 5-task edit-format smoke run (sandboxed), new `assistant research` runs to freeze reports for the research-to-code tasks (no code is executed), and the bench `code` suite on llama.cpp (unsandboxed). Recommended: one go-ahead now for all sandboxed Stage 3 runs and the research runs, so building and authoring tasks never waits on a sign-off, with the unsandboxed bench run asked for separately.
+**When may real models run?** Three steps need a real model before phase 1: the 5-task edit-format smoke run (sandboxed), new `assistant research` runs to freeze reports for the research-to-code tasks (no code is executed), and the bench `code` suite on llama.cpp (unsandboxed). **Van's answer (2026-11-13):** go-ahead now for all sandboxed Stage 3 runs (smoke runs, phases 1 to 4) and the research runs that freeze task reports. The unsandboxed bench `code` run still needs its own OK.
 
 ## Builder check
 
-A fresh reviewer read this design as the builder on 2026-11-13. Its questions and their answers are marked "builder-check answer" above: the loop owns retries (5.1), one proxy per task run (5.1), Headroom compresses only test feedback (6), the gate applies to the best configuration with tasks frozen before any model sees them (6), and Docker tests skip without Docker (8). The one question only Van can answer is in section 10.
+A fresh reviewer read this design as the builder on 2026-11-13. Its questions and their answers are marked "builder-check answer" above: the loop owns retries (5.1), one proxy per task run (5.1), Headroom compresses only test feedback (6), the gate applies to the best configuration with tasks frozen before any model sees them (6), and Docker tests skip without Docker (8). The one question only Van could answer is in section 10, now answered.
