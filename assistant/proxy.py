@@ -32,7 +32,8 @@ class ProxyError(Exception):
 
 class Proxy:
     def __init__(self, settings: Settings, gateway: Gateway, *, private: bool = True,
-                 local_temperature: float | None = None) -> None:
+                 local_temperature: float | None = None, search=None) -> None:
+        self.search = search   # query -> results, served at POST /search for LDR's page retriever
         self.settings = settings
         self.gateway = gateway
         self.private = private
@@ -136,6 +137,13 @@ def make_server(proxy: Proxy, host: str = "127.0.0.1", port: int = 8765) -> Thre
                 self._json(404, _error("not found", "not_found"))
 
         def do_POST(self) -> None:
+            if self.path.rstrip("/") in ("/v1/search", "/search") and proxy.search:
+                try:
+                    body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                    self._json(200, {"results": proxy.search(str(body.get("query", "")))})
+                except Exception as exc:   # the retriever gets an error it can report, not a hang
+                    self._json(502, _error(f"{type(exc).__name__}: {exc}", "search_error"))
+                return
             if self.path.rstrip("/") not in ("/v1/chat/completions", "/chat/completions"):
                 self._json(404, _error("not found", "not_found"))
                 return

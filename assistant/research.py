@@ -18,6 +18,7 @@ import json
 import os
 import re
 import subprocess
+import time
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -111,16 +112,26 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
                      "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
 
-    pages_job = None
+    page_search = None
     if search == "searxng" and settings.research.web_pages:
-        pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
-        if (public or public_search) and settings.research.tavily_fallback:
-            # Only a public question may reach Tavily. A private one gets no results instead.
-            secret = os.environ.get(CLOUD_SEARCH["tavily"], "")
-            pages_job["tavily_key"] = secret
+        # Only a public question may reach Tavily. A private one never gets the key.
+        fallback_key = (os.environ.get(CLOUD_SEARCH["tavily"], "")
+                        if (public or public_search) and settings.research.tavily_fallback else "")
+        secret = secret or fallback_key
+
+        def page_search(text: str) -> list[dict]:
+            from .web_pages import search_pages   # see web_pages.py for why this runs here, not in LDR
+            started = time.perf_counter()
+            results = search_pages(settings.searxng_url, text, settings.research.web_pages,
+                                   transport=transport, tavily_key=fallback_key)
+            engine = results[0]["engine"] if results else "none"
+            log.step("search", tier=engine, tier_kind="cloud" if engine == "tavily" else "local", query=text,
+                     outcome="ok" if results else "empty", hits=len(results),
+                     total_s=round(time.perf_counter() - started, 3))
+            return results
 
     gateway = Gateway(settings, log, transport=transport)
-    server = make_server(Proxy(settings, gateway, private=not public,
+    server = make_server(Proxy(settings, gateway, private=not public, search=page_search,
                                 local_temperature=settings.research.writer_temperature), port=0)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     host, port = server.server_address[:2]
@@ -131,8 +142,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                                         private=not public, tavily_key=secret)}
     if codex_job:
         job["codex"] = codex_job
-    if pages_job:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
-        job["pages"] = pages_job
+    if page_search:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
+        job["pages"] = {"search_url": f"{proxy_url}/search"}
         job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.

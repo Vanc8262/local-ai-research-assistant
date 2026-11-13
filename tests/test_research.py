@@ -119,34 +119,51 @@ def test_show_prints_research_steps(tmp_path, capsys):
     assert "local + searxng -> 4 sources" in out and "total=89.4 s" in out
 
 
-def test_the_tavily_fallback_key_goes_to_public_searxng_research_only(tmp_path, monkeypatch):
-    script = tmp_path / "echo_ldr.py"
-    script.write_text(FAKE_LDR.replace('echo = o.get("search.engine.web.tavily.api_key", "")',
-                                       'echo = "key=" + job.get("pages", {}).get("tavily_key", "none")'), encoding="utf-8")
+# Like FAKE_LDR, but it also searches the way web_pages.load_retriever does: through the proxy.
+SEARCHING_LDR = FAKE_LDR.replace(
+    'echo = o.get("search.engine.web.tavily.api_key", "")',
+    'reply = json.load(urllib.request.urlopen(urllib.request.Request(job["pages"]["search_url"], '
+    'json.dumps({"query": "q"}).encode(), {"Content-Type": "application/json"})))\n'
+    'echo = "engines=" + ",".join(r["engine"] for r in reply["results"]) + " job=" + json.dumps(job)')
+
+
+def search_upstream(seen: list):
+    """SearXNG has no results (its engines are suspended); Tavily answers; anything else is the model."""
+    def handler(request):
+        seen.append((request.url.host, request.headers.get("authorization", "")))
+        if request.url.host == "127.0.0.1" and request.url.path == "/search":
+            return httpx.Response(200, json={"results": []})
+        if request.url.host == "api.tavily.com":
+            return httpx.Response(200, json={"results": [{"title": "T", "url": "https://t.example/a", "content": "x"}]})
+        if request.url.host == "t.example":
+            return httpx.Response(404)
+        return httpx.Response(200, content=fake_model.sse({"content": "Lazy imports are new"}))
+    return httpx.MockTransport(handler)
+
+
+def test_tavily_fallback_is_for_public_questions_and_the_key_stays_out_of_ldr(tmp_path, monkeypatch):
+    import assistant.web_pages
+    monkeypatch.setattr(assistant.web_pages, "MIN_GAP_S", 0)
+    script = tmp_path / "searching_ldr.py"
+    script.write_text(SEARCHING_LDR, encoding="utf-8")
     monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
-    settings = settings_for(tmp_path)
+    settings, runner = settings_for(tmp_path), [sys.executable, str(script)]
 
-    private = run_research(settings, "q", RunLog(settings.runs_dir), runner=[sys.executable, str(script)],
-                           transport=upstream([]))
-    assert "key=none" in private.sources[0]["snippet"]              # private: Tavily is never offered
+    seen = []
+    private = run_research(settings, "q", RunLog(settings.runs_dir), runner=runner, transport=search_upstream(seen))
+    assert "engines= job=" in private.sources[0]["snippet"]          # no results, and Tavily was never asked
+    assert all(host != "api.tavily.com" for host, _ in seen)
 
-    log = RunLog(settings.runs_dir)
-    public = run_research(settings, "q", log, public=True, runner=[sys.executable, str(script)],
-                          transport=upstream([]))
-    assert "key=***" in public.sources[0]["snippet"]                # passed, and scrubbed from what is saved
-    for path in [log.path, *public.run_dir.iterdir()]:
-        assert "tvly-secret" not in path.read_text(encoding="utf-8")
+    for options in ({"public": True}, {"public_search": True}):      # the eval's local mode uses public_search
+        seen, log = [], RunLog(settings.runs_dir)
+        result = run_research(settings, "q", log, runner=runner, transport=search_upstream(seen), **options)
+        snippet = result.sources[0]["snippet"]
+        assert "engines=tavily job=" in snippet and "tvly" not in snippet   # the job LDR got holds no key
+        assert ("api.tavily.com", "Bearer tvly-secret") in seen
+        (step,) = [s for s in read_run(log.path) if s.get("kind") == "search"]
+        assert step["tier"] == "tavily" and step["tier_kind"] == "cloud" and step["hits"] == 1
+        for path in [log.path, *result.run_dir.iterdir()]:
+            assert "tvly-secret" not in path.read_text(encoding="utf-8")
 
-
-def test_a_public_question_may_use_the_fallback_while_the_prompt_stays_private(tmp_path, monkeypatch):
-    script = tmp_path / "echo_ldr.py"
-    script.write_text(FAKE_LDR.replace('echo = o.get("search.engine.web.tavily.api_key", "")',
-                                       'echo = "key=" + job.get("pages", {}).get("tavily_key", "none") '
-                                       '+ " local=" + str(o["llm.require_local_endpoint"])'), encoding="utf-8")
-    monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
-    settings = settings_for(tmp_path)
-    result = run_research(settings, "q", RunLog(settings.runs_dir), runner=[sys.executable, str(script)],
-                          transport=upstream([]), public_search=True)
-    assert "key=*** local=True" in result.sources[0]["snippet"]
     with pytest.raises(PrivacyError):   # public_search never unlocks a cloud model
         run_research(settings, "q", RunLog(settings.runs_dir), tier="gemini", runner=["never-run"], public_search=True)
