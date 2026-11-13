@@ -33,7 +33,8 @@ def main() -> int:
             from pathlib import Path
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # for `import assistant.verify`
             from web_pages import load_retriever as load_pages
-            kwargs["retrievers"] = {"pages": load_pages(job["pages"]["searxng_url"], job["pages"].get("k", 6))}
+            kwargs["retrievers"] = {"pages": load_pages(job["pages"]["searxng_url"], job["pages"].get("k", 6),
+                                                         job["pages"].get("tavily_key", ""))}
         run = generate_report if job.get("mode") == "report" else quick_summary
         result = run(job["query"], **kwargs)
     except Exception as exc:   # report any LDR failure to the caller instead of a traceback

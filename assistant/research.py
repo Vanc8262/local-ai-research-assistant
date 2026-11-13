@@ -110,6 +110,10 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     pages_job = None
     if search == "searxng" and settings.research.web_pages:
         pages_job = {"searxng_url": settings.searxng_url, "k": settings.research.web_pages}
+        if public and settings.research.tavily_fallback:
+            # Only a public question may reach Tavily. A private one gets no results instead.
+            secret = os.environ.get(CLOUD_SEARCH["tavily"], "")
+            pages_job["tavily_key"] = secret
 
     gateway = Gateway(settings, log, transport=transport)
     server = make_server(Proxy(settings, gateway, private=not public,
@@ -157,8 +161,9 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         result.report_path.write_text(report_markdown(query, result), encoding="utf-8")
     (run_dir / "sources.json").write_text(json.dumps(result.sources, ensure_ascii=False, indent=2),
                                           encoding="utf-8")
+    fallback = sum((s.get("metadata") or {}).get("engine") == "tavily" for s in result.sources)
     log.step("research", **base, outcome="error" if result.error or not result.summary else "ok",
-             elapsed_s=result.elapsed_s, n_sources=len(result.sources), report_chars=len(result.summary),
+             elapsed_s=result.elapsed_s, n_sources=len(result.sources), tavily_fallback_sources=fallback, report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
     return result
 

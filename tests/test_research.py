@@ -117,3 +117,22 @@ def test_show_prints_research_steps(tmp_path, capsys):
     cmd_show(settings, Args())
     out = capsys.readouterr().out
     assert "local + searxng -> 4 sources" in out and "total=89.4 s" in out
+
+
+def test_the_tavily_fallback_key_goes_to_public_searxng_research_only(tmp_path, monkeypatch):
+    script = tmp_path / "echo_ldr.py"
+    script.write_text(FAKE_LDR.replace('echo = o.get("search.engine.web.tavily.api_key", "")',
+                                       'echo = "key=" + job.get("pages", {}).get("tavily_key", "none")'), encoding="utf-8")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-secret")
+    settings = settings_for(tmp_path)
+
+    private = run_research(settings, "q", RunLog(settings.runs_dir), runner=[sys.executable, str(script)],
+                           transport=upstream([]))
+    assert "key=none" in private.sources[0]["snippet"]              # private: Tavily is never offered
+
+    log = RunLog(settings.runs_dir)
+    public = run_research(settings, "q", log, public=True, runner=[sys.executable, str(script)],
+                          transport=upstream([]))
+    assert "key=***" in public.sources[0]["snippet"]                # passed, and scrubbed from what is saved
+    for path in [log.path, *public.run_dir.iterdir()]:
+        assert "tvly-secret" not in path.read_text(encoding="utf-8")

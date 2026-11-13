@@ -19,8 +19,9 @@ import httpx
 
 from assistant.verify import best_passages, html_to_text
 
-USER_AGENT = "Mozilla/5.0 (compatible; local-ai-research-assistant/0.1; personal research)"
+USER_AGENT = "Mozilla/5.0 (compatible; research-assistant/0.1)"
 MAX_PAGE_BYTES = 2 * 2**20
+TAVILY_URL = "https://api.tavily.com/search"
 MIN_GAP_S = 4.0   # between SearXNG queries: LDR fires several at once and Brave answers 429
 _gate, _last = threading.Lock(), [0.0]
 
@@ -38,25 +39,39 @@ def page_text(client: httpx.Client, url: str) -> str:
         return ""
 
 
-def search_pages(searxng_url: str, query: str, k: int = 6, transport=None) -> list[dict]:
-    """[{title, url, text}]: the top k results, each with its snippet and best page passages.
-    A page that cannot be fetched keeps its snippet alone."""
+def tavily_hits(client: httpx.Client, key: str, query: str, k: int) -> list[dict]:
+    resp = client.post(TAVILY_URL, json={"query": query, "max_results": k},
+                       headers={"Authorization": f"Bearer {key}"})
+    resp.raise_for_status()
+    return [{"title": r.get("title", ""), "url": r["url"], "content": r.get("content", "")}
+            for r in resp.json().get("results", []) if r.get("url")][:k]
+
+
+def search_pages(searxng_url: str, query: str, k: int = 6, transport=None, tavily_key: str = "") -> list[dict]:
+    """[{title, url, text, engine}]: the top k results, each with its snippet and best page
+    passages. A page that cannot be fetched keeps its snippet alone. If SearXNG has no
+    results (its engines suspend it under load) and a Tavily key was passed, Tavily is
+    asked instead; research.py passes the key only for public questions."""
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True,
                       headers={"User-Agent": USER_AGENT}, transport=transport) as client:
         with _gate:   # one query at a time, spaced out
             time.sleep(max(0.0, _last[0] + MIN_GAP_S - time.monotonic()))
             resp = client.get(f"{searxng_url.rstrip('/')}/search", params={"q": query, "format": "json"})
             _last[0] = time.monotonic()
-        resp.raise_for_status()
-        hits = [h for h in resp.json().get("results", []) if h.get("url")][:k]
+        hits = [h for h in resp.json().get("results", []) if h.get("url")][:k] if resp.status_code == 200 else []
+        engine = "searxng"
+        if not hits and tavily_key:
+            hits, engine = tavily_hits(client, tavily_key, query, k), "tavily"
+        elif not hits:
+            resp.raise_for_status()
         with ThreadPoolExecutor(max_workers=max(len(hits), 1)) as pool:
             pages = list(pool.map(lambda h: page_text(client, h["url"]), hits))
-    return [{"title": hit.get("title", ""), "url": hit["url"],
+    return [{"title": hit.get("title", ""), "url": hit["url"], "engine": engine,
              "text": "\n...\n".join([hit.get("content", "")] + (best_passages(query, page) if page else []))}
             for hit, page in zip(hits, pages)]
 
 
-def load_retriever(searxng_url: str, k: int = 6):
+def load_retriever(searxng_url: str, k: int = 6, tavily_key: str = ""):
     from typing import Any
 
     from langchain_core.documents import Document
@@ -65,10 +80,12 @@ def load_retriever(searxng_url: str, k: int = 6):
     class PageRetriever(BaseRetriever):
         url: str
         k: int
+        tavily_key: str = ""
         transport: Any = None
 
         def _get_relevant_documents(self, query, *, run_manager=None):
-            return [Document(page_content=r["text"], metadata={"title": r["title"], "source": r["url"]})
-                    for r in search_pages(self.url, query, self.k, self.transport)]
+            return [Document(page_content=r["text"], metadata={"title": r["title"], "source": r["url"],
+                                                             "engine": r["engine"]})
+                    for r in search_pages(self.url, query, self.k, self.transport, self.tavily_key)]
 
-    return PageRetriever(url=searxng_url, k=k)
+    return PageRetriever(url=searxng_url, k=k, tavily_key=tavily_key)
