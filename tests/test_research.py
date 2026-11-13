@@ -167,3 +167,11 @@ def test_tavily_fallback_is_for_public_questions_and_the_key_stays_out_of_ldr(tm
 
     with pytest.raises(PrivacyError):   # public_search never unlocks a cloud model
         run_research(settings, "q", RunLog(settings.runs_dir), tier="gemini", runner=["never-run"], public_search=True)
+
+
+def test_offline_search_needs_kiwix_books(tmp_path):
+    from assistant.gateway import TierNotReady
+    settings = settings_for(tmp_path)
+    settings.search.kiwix_books = []
+    with pytest.raises(TierNotReady, match="kiwix_books"):
+        run_research(settings, "q", RunLog(settings.runs_dir), search="offline", runner=["never-run"])

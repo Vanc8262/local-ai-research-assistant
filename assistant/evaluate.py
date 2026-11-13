@@ -44,6 +44,7 @@ MODES = {
     "local": (None, "searxng", False),
     "hybrid": ("gemini", "tavily", True),
     "codex": (None, "codex", False),   # local, from the codex papers; only questions marked codex = true
+    "offline": (None, "offline", False),   # local, Kiwix copies only: nothing leaves the PC (reported, not gated)
 }
 GATE_COVERAGE, GATE_ACCURACY, GATE_MAX_REMOVED, GATE_MIN_FACTS = 1.0, 0.95, 0.15, 0.75
 RUNS = 2
@@ -52,7 +53,7 @@ FIELDS = ("question", "mode", "run", "outcome", "research_s", "verify_s", "repai
           "accuracy", "supported", "partial", "unsupported", "uncited", "facts", "claims_before",
           "coverage_before", "accuracy_before", "facts_before", "cited", "rewritten", "removed",
           "removed_share", "doubted", "decider_errors", "min_free_ram_mb", "local_tokens", "cloud_tokens",
-          "gate", "run_id", "error", "tavily_sources")
+          "gate", "run_id", "error", "tavily_sources", "offline_sources", "live_sources", "bonus_sources")
 
 
 @dataclass
@@ -145,6 +146,8 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
         return {**row, "outcome": "not_run", "error": f"{type(exc).__name__}: {exc}"}
     row["research_s"] = round(time.perf_counter() - started, 1)
     row["sources"], row["tavily_sources"] = len(result.sources), result.tavily_sources
+    for layer in ("offline", "live", "bonus"):
+        row[f"{layer}_sources"] = result.layer_sources.get(layer, 0)
     if search != "codex" and result.summary and not result.sources:   # blocked search, not a bad report
         return {**row, "outcome": "no_sources", "error": "the search returned nothing", **_tokens(log)}
     if not result.summary:
@@ -240,6 +243,13 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
         if used:
             lines.append(f"Tavily fallback (SearXNG returned nothing): {len(used)} of these reports used it, "
                          f"for {sum(int(r['tavily_sources']) for r in used)} sources in all.")
+        layered = {layer: sum(int(r.get(f"{layer}_sources") or 0) for r in done) for layer in ("offline", "live", "bonus")}
+        total = sum(int(r.get("sources") or 0) for r in done)
+        if any(layered.values()) and total:
+            lines.append(f"Sources by search layer: offline {layered['offline']}, free APIs {layered['live']}, "
+                         f"SearXNG {layered['bonus']}, Tavily {sum(int(r.get('tavily_sources') or 0) for r in done)} "
+                         f"(of {total}; offline and free APIs together "
+                         f"{(layered['offline'] + layered['live']) / total:.0%}).")
         both = {}
         for r in done:
             both.setdefault(r["question"], []).append(r["gate"] == "pass")

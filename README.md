@@ -95,14 +95,16 @@ python -m assistant ask --public -t local -t gemini "Explain KV cache in one par
 python -m assistant search "llama.cpp KV cache quantization"
 python -m assistant show <run_id>                      # the logged steps of a run
 python -m assistant proxy                              # tiers as an OpenAI endpoint on http://127.0.0.1:8765/v1
-python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder; "page" items are printed to PDF by headless Edge
+python -m assistant codex fetch                        # download codex/catalog.toml into the codex folder; "page" items are printed to PDF by headless Edge, "text" items kept as Markdown
 python -m assistant codex index                        # embed the codex PDFs (nomic-embed-text)
 python -m assistant research "What is new in Python 3.15?"             # cited report, local only
 python -m assistant research --public -t gemini --search tavily "What is new in Python 3.15?"
 python -m assistant research --search codex "How does QLoRA differ from LoRA?"   # cites codex pages
+python -m assistant research --search offline "How does QLoRA differ from LoRA?" # Kiwix copies only; nothing leaves the PC
 python -m assistant verify <run_id>                    # check every claim's citations against its sources
 python -m assistant repair <run_id>                    # fix or remove the claims that failed verify
 python -m assistant eval [--runs 2]                    # Stage 2 eval: 5 questions x 2 runs; local, hybrid and codex; verified and repaired
+python -m assistant eval --mode local --mode offline --no-tavily   # the fully local search gate
 python -m assistant vault plan                         # what the picks in vault.toml would store
 python -m assistant vault sync                         # store exactly those picks, verified
 python -m assistant vault verify                       # re-hash every stored file
@@ -114,7 +116,26 @@ Tools that make their own model calls, such as Local Deep Research in Stage 2, p
 
 `research` runs Local Deep Research from its own venv (`[research] ldr_python`) with the proxy as its only model provider, and saves `report.md`, `sources.json` and LDR's raw `result.json` under `runs/<run_id>/`. Tavily sees the query, so like a cloud tier it needs `--public`.
 
-`codex index` reads each downloaded PDF page by page, splits the text into chunks of about 1,000 characters and embeds them with `text-embedding-nomic-embed-text-v1.5`, which llama-swap keeps loaded next to Gemma (about 0.9 GB of RAM and 0.3 GB of VRAM). The FAISS index is saved in `<codex_dir>/.index`, outside the repo, and is rebuilt only when the set of PDFs changes. `research --search codex` gives that index to Local Deep Research as its search engine, searching it two ways at once: by meaning (embeddings) and by exact words and figures (BM25), so a "48GB" or a "Q4_K_M" is found even where the embedding blurs it, and each source is a page of a codex file (`file:///…/react.pdf#page=3`). The codex is private, so codex research refuses `--public` and embeddings must come from a server on this PC. The verifier checks a codex citation against the chunk the model was given instead of fetching it. Local Deep Research will not mix a private engine with web search in one run, so the codex and the web are searched in separate runs.
+### Web search without a search API
+
+`research` (with the default `--search searxng`) asks the search router in [`assistant/sources.py`](assistant/sources.py), configured under `[search]` in `assistant.toml`. It has three layers, all asked at once for every query:
+
+- **Offline:** kiwix-serve on this PC, serving ZIM copies of English Wikipedia (no pictures, about 49 GB), the DevDocs manuals for Python, pandas, NumPy, scikit-learn, PyTorch, Docker, Kubernetes, Terraform, Git, PostgreSQL and FastAPI, and the AI, Data Science and Cross Validated Stack Exchange sites (Stack Overflow, 107 GB, is optional). Nothing leaves the PC and nothing can block it.
+- **Free APIs:** arXiv, OpenAlex and Hugging Face papers for research questions, GitHub and Stack Exchange for code and tools, and Hacker News for release news. The query's words pick two or three of them. Each is called directly at its published rate (arXiv once every 3 seconds, GitHub's search 10 times a minute) with a 7-day cache in `runs/search-cache/`. Calling them here instead of through SearXNG matters, because SearXNG suspends an engine for an hour after one "too many requests" and for a day after a block.
+- **SearXNG:** the general engines (Brave, Google, DuckDuckGo) as a bonus when they answer.
+
+The results are merged by rank, at most two from any one source, and each page is fetched so the model gets passages instead of snippets. Tavily is asked only if every layer comes back empty, and only for a public question; `eval --no-tavily` turns it off entirely. `--search offline` asks kiwix-serve alone and fetches only its pages, so a run sends nothing off the PC. Free keys (`GITHUB_TOKEN`, `OPENALEX_API_KEY`, `STACKEXCHANGE_KEY`) raise the free limits and are read only from environment variables. Each search step in the run log lists every source asked, its outcome and the hits per layer, and `eval` reports the share of sources from each layer.
+
+Offline copies, once (about 50 GB without Stack Overflow; rerun monthly to refresh):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\get_kiwix.ps1 -To D:\kiwix       # add -WithStackOverflow for 107 GB more
+$env:KIWIX_DIR = "D:\kiwix"; docker compose up -d kiwix                          # kiwix-serve on http://127.0.0.1:8090
+```
+
+`kiwix_books` names the books without their dates, so a refreshed file is picked up without a config change.
+
+`codex index` reads each downloaded PDF page by page, splits the text into chunks of about 1,000 characters (a "text" item, such as a Markdown README or a pull request's description, is cut at its headings instead, never inside a table row, with the table's header repeated in each piece) and embeds them with `text-embedding-nomic-embed-text-v1.5`, which llama-swap keeps loaded next to Gemma (about 0.9 GB of RAM and 0.3 GB of VRAM). The FAISS index is saved in `<codex_dir>/.index`, outside the repo, and is rebuilt only when the set of PDFs changes. `research --search codex` gives that index to Local Deep Research as its search engine, searching it two ways at once: by meaning (embeddings) and by exact words and figures (BM25), so a "48GB" or a "Q4_K_M" is found even where the embedding blurs it, and each source is a page of a codex file (`file:///…/react.pdf#page=3`). The codex is private, so codex research refuses `--public` and embeddings must come from a server on this PC. The verifier checks a codex citation against the chunk the model was given instead of fetching it. Local Deep Research will not mix a private engine with web search in one run, so the codex and the web are searched in separate runs.
 
 `verify` is the Stage 2 gate. It splits a report into claims and flags any claim without a citation, and any citation to a source that does not exist. For each cited page it checks that the claim's version numbers and figures appear in the page, then asks a local model whether the page's most relevant passages support the claim. The model has to quote the supporting sentence, and a quote that is not in the page does not count. Results go to `verification.md` and `verification.json` in the run folder, with citation coverage (claims cited) and citation accuracy (cited claims supported). The command exits with status 1 while any claim is uncited or unsupported, or cites a missing source, so it can gate a script.
 

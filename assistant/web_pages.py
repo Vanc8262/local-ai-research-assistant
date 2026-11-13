@@ -18,12 +18,14 @@ from __future__ import annotations
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from urllib.parse import urlparse
 
 import httpx
 
 from assistant.verify import best_passages, html_to_text
 
 USER_AGENT = "Mozilla/5.0 (compatible; research-assistant/0.1)"
+LOOPBACK = ("127.0.0.1", "localhost", "::1")
 MAX_PAGE_BYTES = 2 * 2**20
 # Engines that scrape no search engine, so they answer when Brave, Google and DuckDuckGo
 # have suspended the instance. Weaker on plain-language questions; best for papers.
@@ -71,22 +73,40 @@ def searxng_hits(client: httpx.Client, searxng_url: str, query: str, k: int, eng
         return []
 
 
-def search_pages(searxng_url: str, query: str, k: int = 6, transport=None, tavily_key: str = "") -> list[dict]:
-    """[{title, url, text, engine}]: the top k results, each with its snippet and best page
-    passages. A page that cannot be fetched keeps its snippet alone. If SearXNG's general
-    engines have no results (they suspend it under load), Tavily is asked when a key was
-    passed, which research.py does only for public questions; failing that, SearXNG's
-    topic engines are."""
+def search_pages(searxng_url: str, query: str, k: int = 6, transport=None, tavily_key: str = "",
+                 router=None, offline: bool = False, status: list | None = None) -> list[dict]:
+    """[{title, url, text, engine, layer}]: the top k results, each with its snippet and best
+    page passages. A page that cannot be fetched keeps its snippet alone.
+
+    With a `router` (sources.Router, the default from assistant.toml), the offline Kiwix
+    copies, the free public APIs and SearXNG's general engines are asked together; `status`
+    collects one row per source asked. `offline` keeps every request on this PC.
+    Without a router, SearXNG's general engines are asked first, then Tavily when a key was
+    passed (research.py passes one only for public questions), then SearXNG's topic engines.
+    Either way Tavily is asked only when nothing else answered."""
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True,
                       headers={"User-Agent": USER_AGENT}, transport=transport) as client:
-        hits, engine = searxng_hits(client, searxng_url, query, k), "searxng"
-        if not hits and tavily_key:
-            hits, engine = tavily_hits(client, tavily_key, query, k), "tavily"
-        if not hits:   # last resort, and the only one for a private question
-            hits, engine = searxng_hits(client, searxng_url, query, k, engines=TOPIC_ENGINES), "searxng-topic"
+        if router is not None:
+            hits, rows = router.search(query, k, offline=offline, transport=transport)
+            if status is not None:
+                status.extend(rows)
+            if not hits and tavily_key and not offline:
+                hits = [{**h, "engine": "tavily", "layer": "cloud"} for h in tavily_hits(client, tavily_key, query, k)]
+        else:
+            hits, engine = searxng_hits(client, searxng_url, query, k), "searxng"
+            if not hits and tavily_key:
+                hits, engine = tavily_hits(client, tavily_key, query, k), "tavily"
+            if not hits:   # last resort, and the only one for a private question
+                hits, engine = searxng_hits(client, searxng_url, query, k, engines=TOPIC_ENGINES), "searxng-topic"
+            hits = [{**h, "engine": engine, "layer": "cloud" if engine == "tavily" else "bonus"} for h in hits]
+
+        def fetch(hit):
+            if offline and urlparse(hit["url"]).hostname not in LOOPBACK:
+                return ""   # offline: only kiwix-serve's own pages are fetched
+            return page_text(client, hit["url"])
         with ThreadPoolExecutor(max_workers=max(len(hits), 1)) as pool:
-            pages = list(pool.map(lambda h: page_text(client, h["url"]), hits))
-    return [{"title": hit.get("title", ""), "url": hit["url"], "engine": engine,
+            pages = list(pool.map(fetch, hits))
+    return [{"title": hit.get("title", ""), "url": hit["url"], "engine": hit["engine"], "layer": hit["layer"],
              "text": "\n...\n".join([hit.get("content", "")] + (best_passages(query, page) if page else []))}
             for hit, page in zip(hits, pages)]
 
@@ -104,7 +124,7 @@ def load_retriever(search_url: str):
 
         def _get_relevant_documents(self, query, *, run_manager=None):
             return [Document(page_content=r["text"], metadata={"title": r["title"], "source": r["url"],
-                                                             "engine": r["engine"]})
+                                                             "engine": r["engine"], "layer": r.get("layer", "")})
                     for r in self._ask(query)]
 
         def _ask(self, query):
