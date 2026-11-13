@@ -3,6 +3,9 @@ import httpx
 from assistant.web_pages import search_pages
 
 
+
+
+
 def test_results_carry_page_passages_and_fall_back_to_the_snippet():
     long_page = "<html><nav>menu</nav><p>" + "filler text. " * 300 + "QLoRA uses 4-bit NormalFloat (NF4) quantization. " \
                 + "more filler. " * 300 + "</p></html>"

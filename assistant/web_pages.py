@@ -11,6 +11,8 @@ repo on sys.path so the page-to-text and passage code in verify.py is shared.
 """
 from __future__ import annotations
 
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
@@ -19,6 +21,8 @@ from assistant.verify import best_passages, html_to_text
 
 USER_AGENT = "Mozilla/5.0 (compatible; local-ai-research-assistant/0.1; personal research)"
 MAX_PAGE_BYTES = 2 * 2**20
+MIN_GAP_S = 4.0   # between SearXNG queries: LDR fires several at once and Brave answers 429
+_gate, _last = threading.Lock(), [0.0]
 
 
 def page_text(client: httpx.Client, url: str) -> str:
@@ -39,7 +43,10 @@ def search_pages(searxng_url: str, query: str, k: int = 6, transport=None) -> li
     A page that cannot be fetched keeps its snippet alone."""
     with httpx.Client(timeout=httpx.Timeout(10.0, connect=5.0), follow_redirects=True,
                       headers={"User-Agent": USER_AGENT}, transport=transport) as client:
-        resp = client.get(f"{searxng_url.rstrip('/')}/search", params={"q": query, "format": "json"})
+        with _gate:   # one query at a time, spaced out
+            time.sleep(max(0.0, _last[0] + MIN_GAP_S - time.monotonic()))
+            resp = client.get(f"{searxng_url.rstrip('/')}/search", params={"q": query, "format": "json"})
+            _last[0] = time.monotonic()
         resp.raise_for_status()
         hits = [h for h in resp.json().get("results", []) if h.get("url")][:k]
         with ThreadPoolExecutor(max_workers=max(len(hits), 1)) as pool:
