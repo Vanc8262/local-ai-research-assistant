@@ -53,6 +53,10 @@ DOUBTED = "the decider doubts it"
 MIN_DECIDER_P = 0.8   # from 88 hand-labelled claims: results/decider_threshold_2026-11-12.md
 NO_SOURCE = "no source has this number"
 
+TABLE_RULE = """If the support is a value in a table, the quote is two lines copied exactly, joined by
+a line break: the table's header row, then the whole row that holds the value. Never build a row
+by joining a row label to the header cells; such a row is not in the source."""
+
 PROMPT = """You check citations in a research report.
 
 Claim: {claim}
@@ -63,7 +67,8 @@ Passages from the cited source [{index}] ({title}):
 Does the source support the claim? Answer with JSON only:
 {{"verdict": "supported" | "partial" | "unsupported", "quote": "<the exact sentence from the passages that supports it, or empty>", "reason": "<one short sentence>"}}
 "supported" means the passages state the claim, including any version numbers and figures in it.
-"partial" means they support part of it. Copy the quote exactly; do not paraphrase."""
+"partial" means they support part of it. Copy the quote exactly; do not paraphrase.
+""" + TABLE_RULE
 
 COMBINED_PROMPT = """You check citations in a research report. The claim cites several sources; judge
 whether they support it together, each source covering its own part.
@@ -76,7 +81,8 @@ Passages, each marked with its source number:
 Answer with JSON only:
 {{"verdict": "supported" | "partial" | "unsupported", "quotes": [{{"source": "<number>", "quote": "<exact sentence>"}}], "reason": "<one short sentence>"}}
 "supported" means every part of the claim, including version numbers and figures, is stated by at
-least one of the sources. Give one quote per part. Copy quotes exactly; do not paraphrase."""
+least one of the sources. Give one quote per part. Copy quotes exactly; do not paraphrase.
+""" + TABLE_RULE
 
 
 @dataclass

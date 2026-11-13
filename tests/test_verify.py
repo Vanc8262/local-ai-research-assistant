@@ -7,7 +7,7 @@ from assistant.config import Settings, Tier
 from assistant.gateway import Gateway
 from assistant.runlog import RunLog, read_run
 from assistant.verify import (best_passages, html_to_text, missing_facts, parse_verdict, split_claims,
-                              verify_run)
+                              verify_run, quote_in_source, PROMPT, COMBINED_PROMPT)
 
 REPORT = """# What is new in Python 3.15?
 
@@ -323,3 +323,18 @@ def test_a_failing_decider_is_counted_not_trusted_silently(tmp_path):
     result = verify_with(tmp_path, FakeDecider(error="no logprobs"))
     assert result.claims[0].verdict == "supported"
     assert result.summary()["decider_errors"] >= 1
+
+
+def test_table_values_are_quoted_as_header_and_row():
+    # The quantize README table, as the codex indexed it (2026-11-12 gguf-quants run).
+    table = ("| Measure     | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K   | Q8_0   |\n"
+             "|-------------|--------|--------|--------|--------|--------|--------|\n"
+             "| bits/weight | 4.6672 | 4.8944 | 5.5704 | 5.7036 | 6.5633 | 8.5008 |\n"
+             "| size (GiB)  | 4.36   | 4.58   | 5.21   | 5.33   | 6.14   | 7.95   |\n")
+    header_and_row = ("| Measure | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K | Q8_0 |\n"
+                      "| size (GiB) | 4.36 | 4.58 | 5.21 | 5.33 | 6.14 | 7.95 |")
+    assert quote_in_source(header_and_row, table)
+    # What the checker wrote instead: a row label joined to the header cells, not in the source.
+    assert not quote_in_source("bits/weight | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K", table)
+    for prompt in (PROMPT, COMBINED_PROMPT):
+        assert "header row" in prompt and "{claim}" in prompt

@@ -105,7 +105,8 @@ def test_codex_research_passes_the_index_to_ldr_and_stays_private(tmp_path):
     source = result.sources[0]
     assert result.error is None and source["search_tool"] == "codex"
     assert source["codex_job"] == {"index_dir": str(index_dir(settings)), "embed_url": "http://127.0.0.1:1234/v1",
-                                   "embed_model": settings.research.embed_model, "k": 8}
+                                   "embed_model": settings.research.embed_model, "k": 8,
+                                   "min_sources": 10}
     assert "file:///codex/llm-agents/react.pdf#page=1" in result.report_path.read_text(encoding="utf-8")
 
 
@@ -152,7 +153,8 @@ def test_keyword_terms_split_numbers_from_units_and_fusion_rewards_agreement():
 
     from assistant.codex_index import fuse, terms
     assert terms("QLoRA fits 65B on one 48GB GPU, Q4_K_M 3.5") == [
-        "qlora", "fits", "65", "b", "on", "one", "48", "gb", "gpu", "q", "4", "k", "m", "3.5"]
+        "qlora", "fits", "65", "b", "on", "one", "48", "gb", "gpu", "q", "4", "k", "m", "3.5", "q4_k_m"]
+    assert terms("NF4 beats FP16; Q8_0 and Q4_K_S") [-4:] == ["nf4", "fp16", "q8_0", "q4_k_s"]
 
     def doc(page, text):
         return SimpleNamespace(metadata={"source": f"file:///q.pdf#page={page}"}, page_content=text)
@@ -183,3 +185,47 @@ def test_hits_are_widened_with_their_neighbours_from_the_same_file():
     assert wide.metadata["source"].endswith("aws.pdf#page=7")
     (edge,) = widen([chunks[3]], chunks)              # never borrows from another file
     assert edge.page_content == "git basics"
+
+
+def test_markdown_is_cut_at_headings_and_tables_keep_their_header():
+    from assistant.codex_index import sections, split_text
+    table = "| Measure | Q4_K_M | Q8_0 |\n|---|---|---|\n" + "".join(
+        f"| row {i:02d} | {i}.1 | {i}.2 |\n" for i in range(40))
+    text = "intro line\n\n# Quantize\n\nSome words.\n\n" + table + "\n## Next\n\nMore."
+    parts = sections(text)
+    assert [p.split("\n")[0] for p in parts] == ["intro line", "# Quantize", "## Next"]
+    chunks = split_text(parts[1], size=300)
+    assert len(chunks) > 2
+    rows = [line for chunk in chunks for line in chunk.split("\n") if line.startswith("| row")]
+    assert rows == [f"| row {i:02d} | {i}.1 | {i}.2 |" for i in range(40)]   # every row once, none cut
+    for chunk in chunks:
+        if "| row" in chunk:
+            assert "| Measure | Q4_K_M | Q8_0 |\n|---|---|---|" in chunk
+        assert len(chunk) <= 300
+    long = "word " * 200
+    assert all(len(c) <= 300 for c in split_text(long, size=300))
+
+
+def test_pick_tops_up_to_k_with_at_most_three_hits_per_file():
+    from types import SimpleNamespace
+
+    from assistant.codex_index import pick
+    hits = [SimpleNamespace(metadata={"codex_id": doc}, page_content=f"{doc}{i}")
+            for i, doc in enumerate("aaaaabbc")]
+    picked = pick(hits, 5)
+    assert [h.page_content for h in picked] == ["a0", "a1", "a2", "b5", "b6"]
+    assert len(pick(hits, 8)) == 6   # fewer hits than k: all that the cap allows
+
+
+def test_ldr_runner_tops_up_the_relevance_filter_without_duplicates():
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location(
+        "ldr_runner", Path(__file__).parent.parent / "assistant" / "ldr_runner.py")
+    runner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(runner)
+    results = [{"link": f"file:///k.md#section={i % 4}", "full_content": f"chunk {i % 4}"} for i in range(12)]
+    kept = [results[2], results[6]]   # the model kept one chunk, twice
+    out = runner.top_up(kept, results, 4)
+    assert [r["full_content"] for r in out] == ["chunk 2", "chunk 0", "chunk 1", "chunk 3"]
+    assert runner.top_up(results[:4], results, 2) == results[:4]   # never drops what the model kept

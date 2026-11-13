@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import os
+import re
 import shutil
 import json
 import subprocess
@@ -34,7 +35,12 @@ from .runlog import RunLog
 
 TOPICS = ("python", "software-engineering", "cloud", "ml", "ai-llm", "llm-agents", "rag",
           "local-models", "data-science")
-KINDS = ("pdf", "page", "html")   # page: one web page, printed to PDF; html: a whole doc site, skipped
+# pdf: a PDF download; page: one web page, printed to PDF; text: a Markdown or source file kept
+# as text (a GitHub pull request is fetched as its title and description); html: a whole doc
+# site, skipped
+KINDS = ("pdf", "page", "text", "html")
+GITHUB_PR_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/pull/(\d+)/?$")
+GITHUB_BLOB_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/blob/(.+)$")
 MANIFEST_FIELDS = ("id", "topic", "title", "authors", "year", "url", "licence", "file", "bytes",
                    "sha256", "downloaded_at")
 INDEXER = Path(__file__).with_name("codex_index.py")
@@ -70,7 +76,7 @@ class Item:
             raise CatalogError(f"{self.id}: only https URLs are fetched, not {self.url!r}")
 
     def path(self, codex_dir: Path) -> Path:
-        return Path(codex_dir) / self.topic / f"{self.id}.pdf"
+        return Path(codex_dir) / self.topic / f"{self.id}.{'md' if self.kind == 'text' else 'pdf'}"
 
 
 def load_catalog(path: str | Path) -> list[Item]:
@@ -117,7 +123,8 @@ def fetch(items: list[Item], codex_dir: str | Path, log: RunLog, *, only: list[s
 
     An item whose file is present and matches its manifest checksum is skipped, so a
     rerun fetches only what is new or failed. A "page" item is printed to PDF by a headless
-    browser, so the indexer and citations (file#page=N) treat it like any other PDF.
+    browser, so the indexer and citations (file#page=N) treat it like any other PDF. A
+    "text" item is saved as Markdown, which keeps tables whole and leaves out page chrome.
     "html" items (whole doc sites) are left for a later crawler.
     """
     codex_dir = Path(codex_dir)
@@ -143,7 +150,8 @@ def fetch(items: list[Item], codex_dir: str | Path, log: RunLog, *, only: list[s
             if requested and delay_s:
                 time.sleep(delay_s)   # one request at a time, spaced out, as arXiv asks
             requested = True
-            outcome, row = (_download if item.kind == "pdf" else _print_html)(client, item, codex_dir)
+            fetcher = {"pdf": _download, "page": _print_html, "text": _download_text}[item.kind]
+            outcome, row = fetcher(client, item, codex_dir)
             log.step("download", id=item.id, topic=item.topic, url=item.url, outcome=outcome,
                      bytes=row.get("bytes") if row else None, sha256=row.get("sha256") if row else None)
             if row:
@@ -213,21 +221,66 @@ def _print_html(client, item: Item, codex_dir: Path) -> tuple[str, dict | None]:
     return _finish(part, item, codex_dir)
 
 
+def text_url(url: str) -> tuple[str, bool]:
+    """Where a "text" item's text comes from, and whether that is GitHub's pull request API.
+    A pull request's web page is mostly navigation, commit lists and later comments; its
+    description is the part worth citing. A GitHub blob page becomes its raw file."""
+    if match := GITHUB_PR_RE.match(url):
+        owner, repo, number = match.groups()
+        return f"https://api.github.com/repos/{owner}/{repo}/pulls/{number}", True
+    if match := GITHUB_BLOB_RE.match(url):
+        owner, repo, rest = match.groups()
+        return f"https://raw.githubusercontent.com/{owner}/{repo}/{rest}", False
+    return url, False
+
+
+def _download_text(client: httpx.Client, item: Item, codex_dir: Path) -> tuple[str, dict | None]:
+    url, is_pr = text_url(item.url)
+    try:
+        resp = client.get(url, headers={"Accept": "application/vnd.github+json"} if is_pr else {})
+    except httpx.HTTPError as exc:
+        return f"error: {type(exc).__name__}", None
+    if resp.status_code != 200:
+        return f"http_{resp.status_code}", None
+    if is_pr:
+        try:
+            data = resp.json()
+        except ValueError:
+            return "not_text", None
+        text = f"# {data.get('title') or item.title}\n\n{data.get('body') or ''}"
+    else:
+        text = resp.text
+    head = text.lstrip()[:200].lower()
+    if not text.strip() or head.startswith(("<!doctype", "<html")):
+        return "not_text", None   # a login or landing page instead of the file
+    if len(text.encode("utf-8")) > MAX_BYTES:
+        return "too_large", None
+    path = item.path(codex_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    part = path.with_suffix(".md.part")
+    part.write_text(text.replace("\r\n", "\n"), encoding="utf-8")
+    part.replace(path)
+    return "downloaded", _row(path, item, codex_dir)
+
+
+def _row(path: Path, item: Item, codex_dir: Path) -> dict:
+    return {
+        "id": item.id, "topic": item.topic, "title": item.title, "authors": item.authors,
+        "year": item.year, "url": item.url, "licence": item.licence,
+        "file": path.relative_to(codex_dir).as_posix(), "bytes": path.stat().st_size,
+        "sha256": sha256_of(path), "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+
+
 def _finish(part: Path, item: Item, codex_dir: Path) -> tuple[str, dict | None]:
     path = item.path(codex_dir)
-    size = part.stat().st_size
     with part.open("rb") as handle:
         is_pdf = handle.read(5) == b"%PDF-"
     if not is_pdf:   # a login page or an HTML landing page instead of the document
         part.unlink()
         return "not_pdf", None
     part.replace(path)
-    return "downloaded", {
-        "id": item.id, "topic": item.topic, "title": item.title, "authors": item.authors,
-        "year": item.year, "url": item.url, "licence": item.licence,
-        "file": path.relative_to(codex_dir).as_posix(), "bytes": size, "sha256": sha256_of(path),
-        "downloaded_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-    }
+    return "downloaded", _row(path, item, codex_dir)
 
 
 class _TooLarge(Exception):
@@ -267,7 +320,7 @@ def build_index(settings: Settings, log: RunLog, *, force: bool = False,
     """
     codex_dir = Path(settings.codex_dir)
     rows = [row for row in read_manifest(codex_dir).values()
-            if row["file"].endswith(".pdf") and (codex_dir / row["file"]).exists()]
+            if row["file"].endswith((".pdf", ".md")) and (codex_dir / row["file"]).exists()]
     url = embed_url(settings)
     base = {"n_files": len(rows), "embed_model": settings.research.embed_model}
     if not rows:

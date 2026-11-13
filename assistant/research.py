@@ -110,7 +110,8 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
             log.step("research", **base, outcome="not_ready", error="no codex index")
             raise TierNotReady("the codex has no index yet; run: python -m assistant codex index")
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
-                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
+                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k,
+                     "min_sources": settings.research.codex_min_sources}
 
     page_search = None
     if search == "searxng" and settings.research.web_pages:

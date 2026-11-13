@@ -157,3 +157,53 @@ kind = "page"
     assert calls[0][0] == str(tmp_path / "edge.exe") and calls[0][-1].endswith("3.15.html")
     assert (codex / "python" / "whatsnew-3.15.pdf").read_bytes() == PDF
     assert read_manifest(codex)["whatsnew-3.15"]["file"] == "python/whatsnew-3.15.pdf"
+
+
+TEXT_CATALOG = '''
+[[item]]
+id = "k-quants-pr"
+topic = "local-models"
+title = "k-quants"
+url = "https://github.com/ggml-org/llama.cpp/pull/1684"
+kind = "text"
+
+[[item]]
+id = "llama-cpp-readme"
+topic = "local-models"
+title = "llama.cpp README"
+url = "https://github.com/ggml-org/llama.cpp/blob/master/README.md"
+kind = "text"
+
+[[item]]
+id = "landing"
+topic = "local-models"
+title = "A landing page"
+url = "https://example.org/notes.md"
+kind = "text"
+'''
+
+
+def test_text_items_keep_the_pr_description_and_raw_files(tmp_path):
+    seen = []
+
+    def handler(request):
+        seen.append(str(request.url))
+        if request.url.host == "api.github.com":
+            return httpx.Response(200, json={"title": "k-quants", "body": "This PR adds 2-6 bit k-quants.",
+                                             "comments": 99})
+        if request.url.host == "raw.githubusercontent.com":
+            return httpx.Response(200, text="# llama.cpp\r\n\r\n| a | b |\r\n|---|---|\r\n| 1 | 2 |\r\n")
+        return httpx.Response(200, text="<!DOCTYPE html><html>Sign in</html>")
+
+    codex = tmp_path / "codex"
+    outcomes = fetch(load_catalog(write_catalog(tmp_path, TEXT_CATALOG)), codex, RunLog(tmp_path / "runs"),
+                     delay_s=0, transport=httpx.MockTransport(handler))
+    assert [o for _, o in outcomes] == ["downloaded", "downloaded", "not_text"]
+    assert seen[:2] == ["https://api.github.com/repos/ggml-org/llama.cpp/pulls/1684",
+                        "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/README.md"]
+    pr = (codex / "local-models" / "k-quants-pr.md").read_text(encoding="utf-8")
+    assert pr == "# k-quants\n\nThis PR adds 2-6 bit k-quants."
+    readme = (codex / "local-models" / "llama-cpp-readme.md").read_text(encoding="utf-8")
+    assert "\r" not in readme and "| 1 | 2 |" in readme
+    rows = read_manifest(codex)
+    assert rows["k-quants-pr"]["file"] == "local-models/k-quants-pr.md" and "landing" not in rows
