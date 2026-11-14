@@ -2,7 +2,7 @@
 
 A local-first assistant that researches a topic and then implements the result in a code repository. Existing open-source engines do the searching and editing; this project is the orchestration layer on top of them: a router that decides which model handles each step, a policy that keeps private code on the machine, and a run log that makes local-only and hybrid runs comparable.
 
-**Status:** Stage 2: in the latest eval, with two runs per question and a stricter gate, 7 of 10 local, 8 of 10 hybrid and 3 of 6 codex reports pass ([results](results/stage2_eval_2026-11-08.md)). Stage 0 chose Gemma 4 E4B QAT as the default local model and Qwen3.5 9B as the backup (see [Stage 0 results](#stage-0-results)). See [bench/README.md](bench/README.md) to run the harness.
+**Status:** Stage 2: in the latest eval (2026-11-14, two runs per question, no cloud search), 8 of 10 local reports pass the gate, with 85% of sources from offline Kiwix copies and free keyless APIs ([results](results/stage2_eval_2026-11-14.md)). On 2026-11-13, 10 of 10 codex reports passed ([results](results/stage2_eval_2026-11-13b.md)). A pass shows the checker accepts a report, not that every sentence is true. Stage 0 chose Gemma 4 E4B QAT as the default local model and Qwen3.5 9B as the backup (see [Stage 0 results](#stage-0-results)). See [bench/README.md](bench/README.md) to run the harness.
 
 ## Goals
 
