@@ -8,7 +8,7 @@ import httpx
 
 import fake_model
 from assistant.config import Settings, Tier
-from assistant.evaluate import Question, load_questions, run_eval
+from assistant.evaluate import Question, load_questions, report_body, rescore, run_eval
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -28,7 +28,8 @@ json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], 
 
 
 def settings_for(tmp_path) -> Settings:
-    settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
+    # codex_dir in tmp_path: the default is this PC's real codex, which a test must not read
+    settings = Settings(runs_dir=tmp_path / "runs", default_tier="local", codex_dir=tmp_path / "codex")
     settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
@@ -217,3 +218,27 @@ def test_a_clean_report_missing_expected_facts_fails_the_gate(tmp_path):
     _, (row,) = run_eval(settings_for(tmp_path), [question], ["local"],
                          runner=[sys.executable, str(script)], transport=transport([]), runs=1)
     assert (row["coverage"], row["accuracy"], row["facts"], row["gate"]) == (1.0, 1.0, 0.5, "fail")
+
+
+def test_facts_count_only_in_the_report_body_not_the_title_or_sources():
+    question = Question(id="gguf", text="What do Q4_K_M and Q8_0 mean?", expect=[["Q4_K_M"], ["Q8_0"], ["perplexity"]])
+    report = ("# What do Q4_K_M and Q8_0 mean?\n\nLower bits raise perplexity [1].\n\n"
+              "## Sources\n\n[1] Q4_K_M vs Q8_0 explained https://example.org\n")
+    assert report_body(report).strip() == "Lower bits raise perplexity [1]."
+    assert question.facts_found(report) == 0.333
+
+
+def test_rescore_counts_facts_again_on_the_body_and_reapplies_the_gate(tmp_path):
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    settings = settings_for(tmp_path)
+    question = Question(id="py", text="Does Python 3.15 add lazy imports?", expect=[["3.15"], ["lazy import"]])
+    out_dir, (row,) = run_eval(settings, [question], ["local"], runner=[sys.executable, str(script)],
+                               transport=transport([]), runs=1)
+    assert row["gate"] == "pass"
+    # "lazy import" is now only in the title, as with gguf-quants in the 2026-11-14 eval review
+    report = settings.runs_dir / row["run_id"] / "report.md"
+    report.write_text(report.read_text(encoding="utf-8").replace("adds lazy imports", "adds things"), encoding="utf-8")
+    (new,) = rescore(out_dir, [question])
+    assert (new["gate"], new["gate_new"], new["facts_new"]) == ("pass", "fail", 0.5)
+    assert "1 of 1 passed as run, 0 of 1 with body-only facts" in (out_dir / "rescore.md").read_text(encoding="utf-8")

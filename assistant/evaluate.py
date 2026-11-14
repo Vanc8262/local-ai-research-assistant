@@ -20,6 +20,7 @@ every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summ
 from __future__ import annotations
 
 import csv
+import json
 import shutil
 import subprocess
 import time
@@ -66,11 +67,29 @@ class Question:
     public: bool = False    # holds nothing private: may run in hybrid mode and use the Tavily fallback
 
     def facts_found(self, report: str) -> float | None:
+        """Share of the expected facts the report's body states. The title (the question
+        itself) and the Sources list don't count, or a fact named in the question or in a
+        source title would score for free."""
         if not self.expect:
             return None
-        lowered = report.lower()
+        lowered = report_body(report).lower()
         hits = sum(any(term.lower() in lowered for term in group) for group in self.expect)
         return round(hits / len(self.expect), 3)
+
+
+def report_body(report: str) -> str:
+    """The report without its "# <question>" title line and its "## Sources" list."""
+    lines = report.split("\n## Sources", 1)[0].splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    return "\n".join(lines)
+
+
+def passes_gate(summary: dict, removed_share: float, facts: float | None) -> bool:
+    """The Stage 2 gate on a repaired report's verification summary."""
+    return (summary["citation_coverage"] or 0) >= GATE_COVERAGE and (summary["citation_accuracy"] or 0) >= GATE_ACCURACY \
+        and not summary["dangling_citations"] and removed_share <= GATE_MAX_REMOVED \
+        and (facts is None or facts >= GATE_MIN_FACTS)
 
 
 def load_questions(path: str | Path) -> list[Question]:
@@ -181,9 +200,7 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
     coverage, accuracy = summary["citation_coverage"], summary["citation_accuracy"]
     removed_share = round(repair.count("removed") / repair.before["claims"], 3) if repair.before["claims"] else 0
     facts = question.facts_found(result.report_path.read_text(encoding="utf-8"))
-    passed = (coverage or 0) >= GATE_COVERAGE and (accuracy or 0) >= GATE_ACCURACY \
-        and not summary["dangling_citations"] and removed_share <= GATE_MAX_REMOVED \
-        and (facts is None or facts >= GATE_MIN_FACTS)
+    passed = passes_gate(summary, removed_share, facts)
     row.update(outcome="ok", claims=summary["claims"], coverage=coverage, accuracy=accuracy,
                supported=summary["supported"], partial=summary["partial"],
                unsupported=summary["unsupported"], uncited=summary["uncited"], facts=facts,
@@ -260,4 +277,59 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
     if lowest_ram:
         lines.append(f"\n**Lowest free RAM:** {lowest_ram[0]} MB, during {lowest_ram[1] or 'setup'}. "
                      "Samples every 15 s are in ram.csv.")
+    return "\n".join(lines) + "\n"
+
+
+def rescore(eval_dir: Path, questions: list[Question], runs_dir: Path | None = None) -> list[dict]:
+    """Score a finished eval again from its saved reports, with no model calls: the expected
+    facts are counted again (on the body only) and the gate is applied again to the saved
+    verification summary. Writes rescore.csv and rescore.md next to summary.csv.
+
+    A report edited after its run would score differently from the live eval; nothing here
+    can tell."""
+    eval_dir = Path(eval_dir)
+    runs_dir = Path(runs_dir) if runs_dir else eval_dir.parent
+    by_id = {q.id: q for q in questions}
+    with (eval_dir / "summary.csv").open(encoding="utf-8") as handle:
+        old_rows = list(csv.DictReader(handle))
+    rows = []
+    for old in old_rows:
+        row = {key: old.get(key, "") for key in ("question", "mode", "run", "outcome", "facts", "facts_before", "gate")}
+        row["gate_new"] = row["facts_new"] = row["facts_before_new"] = ""
+        run_dir, question = runs_dir / old.get("run_id", ""), by_id.get(old["question"])
+        if old.get("outcome") == "ok" and question and (run_dir / "verification.json").exists():
+            summary = json.loads((run_dir / "verification.json").read_text(encoding="utf-8"))["summary"]
+            facts = question.facts_found((run_dir / "report.md").read_text(encoding="utf-8"))
+            original = run_dir / "report.original.md"
+            if original.exists():
+                row["facts_before_new"] = question.facts_found(original.read_text(encoding="utf-8"))
+            row["facts_new"] = facts
+            row["gate_new"] = "pass" if passes_gate(summary, float(old.get("removed_share") or 0), facts) else "fail"
+        rows.append(row)
+    fields = ("question", "mode", "run", "outcome", "facts", "facts_new", "facts_before", "facts_before_new",
+              "gate", "gate_new")
+    with (eval_dir / "rescore.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    (eval_dir / "rescore.md").write_text(rescore_markdown(eval_dir.name, rows), encoding="utf-8")
+    return rows
+
+
+def rescore_markdown(name: str, rows: list[dict]) -> str:
+    pct = lambda v: "-" if v in (None, "") else f"{float(v):.0%}"
+    lines = [f"# Rescore of {name}", "",
+             "Expected facts counted on the report body only (no title, no Sources list); the gate applied "
+             "again to the saved verification. A pass shows the checker accepts the report, not that every "
+             "sentence is true.", "",
+             "| Question | Mode | Run | Facts (as run) | Facts (body only) | Gate (as run) | Gate (body only) |",
+             "|---|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['question']} | {r['mode']} | {r['run']} | {pct(r['facts'])} | {pct(r['facts_new'])} | "
+                     f"{r['gate'] or '-'} | {r['gate_new'] or '-'} |")
+    lines.append("")
+    for mode in dict.fromkeys(r["mode"] for r in rows):
+        done = [r for r in rows if r["mode"] == mode]
+        lines.append(f"**{mode}:** {sum(r['gate'] == 'pass' for r in done)} of {len(done)} passed as run, "
+                     f"{sum(r['gate_new'] == 'pass' for r in done)} of {len(done)} with body-only facts.")
     return "\n".join(lines) + "\n"
