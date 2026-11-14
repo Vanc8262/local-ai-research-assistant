@@ -21,7 +21,11 @@ body = json.dumps({"model": o["llm.model"], "messages": [{"role": "user", "conte
 req = urllib.request.Request(o["llm.openai_endpoint.url"] + "/chat/completions", body,
                              {"Content-Type": "application/json"})
 json.load(urllib.request.urlopen(req))
-result = {"summary": "Python 3.15 adds lazy imports [1].", "sources": [
+# six claims: the gate wants at least GATE_MIN_CLAIMS
+claims = ["Python 3.15 adds lazy imports [1].", "The release came out in October [1].",
+          "It speeds up the interpreter start [1].", "Free threading is more stable [1].",
+          "The standard library gained new modules [1].", "Error messages got clearer [1]."]
+result = {"summary": " ".join(claims), "sources": [
     {"index": "1", "title": "What's new", "link": "https://docs.python.org/3/whatsnew/3.15.html"}]}
 json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], "w"))
 '''
@@ -73,7 +77,8 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
         ("local", "ok", 1.0, 1.0, "pass"), ("hybrid", "ok", 1.0, 1.0, "pass")]
     assert rows[0]["facts"] == 1.0
     # research went to the mode's tier; the citation check always ran locally
-    assert seen == ["localhost", "localhost", "cloud", "localhost"]
+    cloud = seen.index("cloud")
+    assert seen.count("cloud") == 1 and set(seen[:cloud]) == set(seen[cloud + 1:]) == {"localhost"} and cloud > 1
     assert rows[0]["local_tokens"] > 0 and rows[0]["cloud_tokens"] == 0
     assert rows[1]["cloud_tokens"] > 0 and rows[1]["local_tokens"] == 0
     with (out_dir / "summary.csv").open(encoding="utf-8") as handle:
@@ -154,7 +159,7 @@ def test_shipped_llama_swap_config_serves_the_local_tiers():
     assert wanted <= served
     assert "-cram 0" in config and "-np 1" in config and "--no-mmproj" in config
 
-FLAGGED_LDR = FAKE_LDR.replace('"Python 3.15 adds lazy imports [1]."',
+FLAGGED_LDR = FAKE_LDR.replace('" ".join(claims)',
                                '"Python 3.15 adds lazy imports [1]. It also adds flying cars for every programmer [1]."')
 
 
@@ -189,6 +194,7 @@ def test_eval_scores_the_repaired_report_and_fails_one_that_lost_too_much(tmp_pa
     assert (row["claims_before"], row["claims"], row["removed"]) == (2, 1, 1)
     assert (row["facts_before"], row["facts"]) == (1.0, 0.5)
     assert row["removed_share"] == 0.5 and row["gate"] == "fail"   # clean, but half the report is gone
+    assert row["gate_failures"] == "few_claims accuracy_before changed_share facts"
     assert "mean claims removed 50%" in (out_dir / "summary.md").read_text(encoding="utf-8")
 
 
@@ -240,8 +246,10 @@ def test_rescore_counts_facts_again_on_the_body_and_reapplies_the_gate(tmp_path)
     report = settings.runs_dir / row["run_id"] / "report.md"
     report.write_text(report.read_text(encoding="utf-8").replace("adds lazy imports", "adds things"), encoding="utf-8")
     (new,) = rescore(out_dir, [question])
-    assert (new["gate"], new["gate_new"], new["facts_new"]) == ("pass", "fail", 0.5)
-    assert "1 of 1 passed as run, 0 of 1 with body-only facts" in (out_dir / "rescore.md").read_text(encoding="utf-8")
+    assert (new["gate"], new["gate_body"], new["gate_new"], new["facts_new"]) == ("pass", "fail", "fail", 0.5)
+    assert new["gate_failures"] == "facts"
+    assert "of 1, 1 passed as run, 0 with body-only facts, 0 under the current gate" in \
+        (out_dir / "rescore.md").read_text(encoding="utf-8")
 
 
 def test_eval_writes_a_manifest_without_keys(tmp_path, monkeypatch):
@@ -264,3 +272,28 @@ def test_eval_writes_a_manifest_without_keys(tmp_path, monkeypatch):
     assert manifest["gguf"]["GEMMA_GGUF"]["bytes"] == 104 and len(manifest["gguf"]["GEMMA_GGUF"]["sha256"]) == 64
     assert len(manifest["questions_file"]["sha256"]) == 64 and "search_cache_version" in manifest
     assert "gemini-test-key" not in text
+
+
+def test_facts_match_whole_words_only():
+    question = Question(id="aws", text="q", expect=[["security"], ["lazy import"]])
+    assert question.facts_found("# q\n\nInsecurity grows. Lazy imports help [1].") == 0.5
+    assert question.facts_found("# q\n\nInsecurity grows. Lazy imports help [1].", exact=False) == 1.0
+
+
+def summary_of(claims, accuracy, unchecked=0, coverage=1.0, dangling=0):
+    return {"claims": claims, "citation_coverage": coverage, "citation_accuracy": accuracy,
+            "unchecked": unchecked, "dangling_citations": dangling}
+
+
+def test_gate_fails_unchecked_few_claims_low_accuracy_before_and_too_many_changes():
+    from assistant.evaluate import gate_failures
+    clean = summary_of(20, 1.0)
+    assert gate_failures(clean, summary_of(20, 0.9), removed=1, rewritten=1, facts=1.0) == []
+    assert gate_failures(summary_of(20, 1.0, unchecked=1), summary_of(20, 0.9), removed=0, rewritten=0,
+                         facts=1.0) == ["unchecked"]
+    assert gate_failures(summary_of(5, 1.0), summary_of(5, 1.0), removed=0, rewritten=0, facts=1.0) == ["few_claims"]
+    assert gate_failures(clean, summary_of(20, 0.69), removed=0, rewritten=0, facts=1.0) == ["accuracy_before"]
+    # rewrites count: 2 removed + 2 rewritten of 20 is 20%, over the 15% share cap
+    assert gate_failures(clean, summary_of(20, 0.9), removed=2, rewritten=2, facts=1.0) == ["changed_share"]
+    # a long report: 6 of 65 is 9%, under the share cap but over the count cap
+    assert gate_failures(summary_of(59, 1.0), summary_of(65, 0.9), removed=6, rewritten=0, facts=1.0) == ["changed_count"]
