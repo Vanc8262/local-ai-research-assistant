@@ -68,7 +68,7 @@ python -m bench run --model gemma-4-12b-qat
 
 Other options:
 
-- `--suites tools,code` runs only some suites.
+- `--suites tools,code` runs only some suites. The default is every suite except `code`, which runs model-written code on this PC with no sandbox (its process gets no API keys, but it can reach files and the network), so it runs only when named.
 - `--tag q5` labels a run, for example a different quantization.
 - `--context 16384` records the context size when you reload the finalist at 16K or 32K.
 

@@ -23,7 +23,9 @@ def project(tmp_path, monkeypatch):
 
 
 def test_full_run_scores_a_perfect_model_as_perfect(project, capsys):
-    assert cli.main(["run", "--model", "fake-model", "--tag", "ctx8k"]) == 0
+    # code is named: a default run leaves it out (it runs model-written code without a sandbox)
+    assert cli.main(["run", "--model", "fake-model", "--tag", "ctx8k",
+                     "--suites", "tools,code,speed,research,vision,headroom"]) == 0
     run_dir = next(p for p in (project / "results").iterdir() if p.is_dir())
     assert run_dir.name.endswith("_fake-model_ctx8k")
 

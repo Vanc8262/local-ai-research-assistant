@@ -89,3 +89,21 @@ def test_extract_code_variants():
     assert extract_code("def f():\n    return 1\n") == ("def f():\n    return 1\n", False)
     assert extract_code("no code here") == (None, False)
     assert extract_code("") == (None, False)
+
+
+def test_model_code_gets_no_keys(monkeypatch):
+    """The test process must not inherit API keys; it still runs, so the environment is enough."""
+    from bench.suites import code_editing
+    monkeypatch.setenv("GEMINI_API_KEY", "gem-secret")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp-secret")
+    env = code_editing.child_env()
+    assert "GEMINI_API_KEY" not in env and "GITHUB_TOKEN" not in env and "PATH" in env
+    task = TASKS[0]
+    probe = task.solution + "\nimport os\nassert 'GEMINI_API_KEY' not in os.environ\n"
+    passed, output = run_tests(task, probe)
+    assert passed, output
+
+
+def test_code_suite_is_not_in_the_default_run():
+    from bench.suites import DEFAULT_SUITES, SUITES
+    assert "code" in SUITES and "code" not in DEFAULT_SUITES
