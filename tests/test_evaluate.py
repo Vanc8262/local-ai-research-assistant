@@ -64,7 +64,7 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
     script = tmp_path / "fake_ldr.py"
     script.write_text(FAKE_LDR, encoding="utf-8")
     seen = []
-    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"]])
+    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"]], public=True)
     out_dir, rows = run_eval(settings_for(tmp_path), [question], ["local", "hybrid"],
                              runner=[sys.executable, str(script)], transport=transport(seen), runs=1)
 
@@ -83,14 +83,32 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
 
 def test_a_mode_that_cannot_run_is_recorded_not_fatal(tmp_path, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    question = Question(id="q", text="q")
+    question = Question(id="q", text="q", public=True)
     _, rows = run_eval(settings_for(tmp_path), [question], ["hybrid"], runner=["never-run"], transport=transport([]))
     assert rows[0]["outcome"] == "not_run" and "TAVILY_API_KEY" in rows[0]["error"]
+
+
+def test_a_private_question_never_runs_hybrid_or_reaches_tavily(tmp_path, monkeypatch):
+    """A question without public = true counts as private: no Gemini, no Tavily fallback."""
+    from assistant import evaluate
+    monkeypatch.setenv("TEST_GEMINI_KEY", "gemini-test-key")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-test-key")
+    calls = []
+    def fake_research(settings, text, log, **options):
+        calls.append(options)
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(evaluate, "run_research", fake_research)
+    question = Question(id="secret", text="q")
+    _, rows = run_eval(settings_for(tmp_path), [question], ["local", "hybrid"], runner=["never-run"],
+                       transport=transport([]), runs=1)
+    assert [r["mode"] for r in rows] == ["local"]
+    assert [(c["public"], c["public_search"]) for c in calls] == [(False, False)]
 
 
 def test_shipped_questions_load():
     questions = load_questions(ROOT / "evals" / "research_questions.toml")
     assert len(questions) == 5 and all(q.expect for q in questions)
+    assert all(q.public for q in questions)   # all five are public; hybrid mode needs that
 
 
 def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):

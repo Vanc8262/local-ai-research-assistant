@@ -1,8 +1,10 @@
-# Stage 2 research eval. Every question is public, so each one can run both local-only and
-# hybrid (Gemini + Tavily). `expect` lists facts a correct answer must mention; matching is
+# Stage 2 research eval. A question marked public = true holds nothing private, so it can run
+# both local-only and hybrid (Gemini + Tavily). A question without it counts as private: it
+# skips hybrid mode and never reaches Tavily. `expect` lists facts a correct answer must mention; matching is
 # case-insensitive and any one spelling in a group counts.
 
 [[question]]
+public = true
 id = "python-315"
 codex = true
 topic = "python"
@@ -10,6 +12,7 @@ text = "What are the main new features in the latest stable Python release?"
 expect = [["3.15"], ["lazy import", "lazy keyword"], ["UTF-8"]]
 
 [[question]]
+public = true
 id = "lora-vs-qlora"
 codex = true
 topic = "ai-llm"
@@ -17,6 +20,7 @@ text = "How does QLoRA reduce memory use compared with LoRA when fine-tuning lar
 expect = [["4-bit", "4 bit"], ["NF4", "NormalFloat"], ["double quantization"], ["paged optimizer"]]
 
 [[question]]
+public = true
 id = "aws-pillars"
 codex = true
 topic = "cloud"
@@ -25,6 +29,7 @@ expect = [["operational excellence"], ["security"], ["reliability"], ["performan
           ["cost optimization"], ["sustainability"]]
 
 [[question]]
+public = true
 id = "gguf-quants"
 codex = true
 topic = "local-models"
@@ -32,6 +37,7 @@ text = "What do the GGUF quantization types Q4_K_M, Q5_K_M and Q8_0 mean in llam
 expect = [["Q4_K_M"], ["Q8_0"], ["k-quant", "k quant", "K-quants"], ["perplexity", "quality"]]
 
 [[question]]
+public = true
 id = "self-rag"
 codex = true
 topic = "rag"
