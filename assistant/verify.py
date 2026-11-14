@@ -447,6 +447,11 @@ def _source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, 
     url = source.get("link") or source.get("url") or ""
     if url.startswith("http"):
         page = fetch_source(client, url, run_dir / "pages" / f"{index}.txt")
+        # The text the search source handed the writer (an OpenAlex abstract, a Stack Exchange
+        # body) counts too: the landing page is often chrome or empty (doi.org, release pages).
+        given = source.get("full_content") or ""
+        if given and _squash(given) not in _squash(page):
+            page = page + "\n\n" + given if page else given
     else:
         page = source.get("full_content") or ""
     snippet = source.get("snippet") or ""

@@ -338,3 +338,13 @@ def test_table_values_are_quoted_as_header_and_row():
     assert not quote_in_source("bits/weight | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K", table)
     for prompt in (PROMPT, COMBINED_PROMPT):
         assert "header row" in prompt and "{claim}" in prompt
+
+
+def test_source_text_includes_the_text_the_search_source_gave(tmp_path):
+    from assistant.verify import _source_text
+    (tmp_path / "pages").mkdir()
+    (tmp_path / "pages" / "2.txt").write_text("Releases v1.0.1 Assets 2", encoding="utf-8")
+    abstract = "Qwen Q4_K_M matched its BF16 accuracy, and Llama Q6_K achieved the highest quantized accuracy."
+    source = {"link": "https://github.com/x/y/releases/tag/v1", "snippet": abstract[:40], "full_content": abstract}
+    page, _, both = _source_text(source, "2", None, tmp_path)
+    assert "Releases v1.0.1" in page and abstract in page and abstract in both

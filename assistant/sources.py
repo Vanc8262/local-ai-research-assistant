@@ -61,7 +61,7 @@ measurable significant significantly provide provides stable""".split())
 
 
 # Bump when a client changes how it builds its request, so old cached hits are not reused.
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 class RateGate:
@@ -179,11 +179,19 @@ def github(client: httpx.Client, query: str, k: int) -> list[dict]:
     headers = {"Accept": "application/vnd.github+json"}
     if os.environ.get("GITHUB_TOKEN"):
         headers["Authorization"] = f"Bearer {os.environ['GITHUB_TOKEN']}"
-    resp = client.get("https://api.github.com/search/repositories",
-                      params={"q": " ".join(keywords(query, 5)), "per_page": k}, headers=headers)
-    resp.raise_for_status()
+    words = keywords(query, 4)
+    items = []
+    for n in range(len(words), max(len(words) - 3, 0), -1):   # GitHub matches every word: drop the last until it finds repos
+        if n < len(words):
+            GATES["github"].wait()
+        resp = client.get("https://api.github.com/search/repositories",
+                          params={"q": " ".join(words[:n]), "per_page": k}, headers=headers)
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        if items or n <= 2:
+            break
     return [_hit(r.get("full_name", ""), r.get("html_url", ""), r.get("description") or "", "github", "live")
-            for r in resp.json().get("items", [])]
+            for r in items]
 
 
 def stackexchange(client: httpx.Client, query: str, k: int) -> list[dict]:

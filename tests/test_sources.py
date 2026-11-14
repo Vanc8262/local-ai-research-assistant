@@ -162,3 +162,19 @@ def test_on_topic_drops_pages_without_the_question_names():
     assert [h["title"] for h in rag] == ["Retrieval-augmented generation"]
     # no names in the query: nothing is dropped
     assert on_topic("What are the main new features in the latest stable Python release?", hits) == hits
+
+
+def test_github_drops_words_until_it_finds_repos():
+    import httpx
+    from assistant.sources import github
+    asked = []
+
+    def handler(request):
+        q = request.url.params["q"]
+        asked.append(q)
+        items = [{"full_name": "a/AWS-Well-Architected", "html_url": "https://github.com/a/b", "description": ""}] \
+            if len(q.split()) <= 3 else []
+        return httpx.Response(200, json={"items": items})
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        hits = github(client, "What are the pillars of the AWS Well-Architected Framework and what does each one cover?", 5)
+    assert len(asked) == 2 and len(asked[0].split()) == 4 and hits[0]["url"] == "https://github.com/a/b"
