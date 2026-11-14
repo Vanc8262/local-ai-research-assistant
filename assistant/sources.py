@@ -60,6 +60,10 @@ typical typically overall approach approaches method methods way ways compare re
 measurable significant significantly provide provides stable""".split())
 
 
+# Bump when a client changes how it builds its request, so old cached hits are not reused.
+CACHE_VERSION = 2
+
+
 class RateGate:
     """At most one request per `gap_s` seconds to one host, shared across threads."""
 
@@ -287,7 +291,7 @@ class Router:
         path = None
         if self.cache_dir:
             scope = ",".join(self._resolved or []) if name == "kiwix" else ""   # new ZIMs: new results
-            digest = hashlib.sha256(f"{name}\n{scope}\n{' '.join(query.lower().split())}\n{k}".encode()).hexdigest()[:24]
+            digest = hashlib.sha256(f"{CACHE_VERSION}\n{name}\n{scope}\n{' '.join(query.lower().split())}\n{k}".encode()).hexdigest()[:24]
             path = Path(self.cache_dir) / f"{name}-{digest}.json"
             try:
                 saved = json.loads(path.read_text(encoding="utf-8"))
