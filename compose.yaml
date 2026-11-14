@@ -18,3 +18,16 @@ services:
       SEARXNG_SECRET: ${SEARXNG_SECRET:-local-only-change-me}
     mem_limit: 1g
     restart: unless-stopped
+
+  # Offline copies for the search router (assistant/sources.py): every .zim file in KIWIX_DIR,
+  # downloaded by scripts/get_kiwix.ps1. Measured at about 50 MB of RAM with one small ZIM.
+  kiwix:
+    image: ghcr.io/kiwix/kiwix-serve:latest
+    container_name: kiwix
+    command: ["*.zim"]
+    ports:
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - ${KIWIX_DIR:-D:/kiwix}:/data:ro
+    mem_limit: 512m
+    restart: unless-stopped

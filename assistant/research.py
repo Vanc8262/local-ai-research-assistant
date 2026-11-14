@@ -36,7 +36,7 @@ WRITER_RULES = ("End every sentence with the number of the source that states it
                 "comparisons or conclusions that no source states. Do not comment on the sources or on "
                 "what they leave out. If the sources do not cover part of the question, leave that part out.")
 RUNNER = Path(__file__).with_name("ldr_runner.py")
-SEARCH_TOOLS = ("searxng", "tavily", "codex")
+SEARCH_TOOLS = ("searxng", "offline", "tavily", "codex")   # offline: Kiwix copies only, nothing leaves the PC
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
 
 
@@ -48,6 +48,7 @@ class ResearchResult:
     elapsed_s: float | None = None
     error: str | None = None
     tavily_sources: int = 0   # sources the Tavily fallback supplied (see web_pages.py)
+    layer_sources: dict = field(default_factory=dict)   # sources per search layer: offline, live, bonus, cloud
 
     @property
     def report_path(self) -> Path:
@@ -110,23 +111,34 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
             log.step("research", **base, outcome="not_ready", error="no codex index")
             raise TierNotReady("the codex has no index yet; run: python -m assistant codex index")
         codex_job = {"index_dir": str(codex.index_dir(settings)), "embed_url": codex.embed_url(settings),
-                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k}
+                     "embed_model": settings.research.embed_model, "k": settings.research.codex_k,
+                     "min_sources": settings.research.codex_min_sources}
 
+    if search == "offline" and not (settings.search.kiwix_books and settings.research.web_pages):
+        log.step("research", **base, outcome="not_ready", error="no offline copies configured")
+        raise TierNotReady("offline search needs kiwix_books in [search] and web_pages > 0 in [research] "
+                           "(see README, \"Offline copies\")")
     page_search = None
-    if search == "searxng" and settings.research.web_pages:
+    if search in ("searxng", "offline") and settings.research.web_pages:
+        offline = search == "offline"
         # Only a public question may reach Tavily. A private one never gets the key.
         fallback_key = (os.environ.get(CLOUD_SEARCH["tavily"], "")
-                        if (public or public_search) and settings.research.tavily_fallback else "")
+                        if (public or public_search) and settings.research.tavily_fallback and not offline else "")
         secret = secret or fallback_key
+        router = make_router(settings, offline=offline) if settings.search.router or offline else None
 
         def page_search(text: str) -> list[dict]:
             from .web_pages import search_pages   # see web_pages.py for why this runs here, not in LDR
-            started = time.perf_counter()
+            started, status = time.perf_counter(), []
             results = search_pages(settings.searxng_url, text, settings.research.web_pages,
-                                   transport=transport, tavily_key=fallback_key)
-            engine = results[0]["engine"] if results else "none"
-            log.step("search", tier=engine, tier_kind="cloud" if engine == "tavily" else "local", query=text,
-                     outcome="ok" if results else "empty", hits=len(results),
+                                   transport=transport, tavily_key=fallback_key, router=router,
+                                   offline=offline, status=status)
+            engines = sorted({r["engine"] for r in results})
+            layers = {layer: sum(r.get("layer") == layer for r in results)
+                      for layer in ("offline", "live", "bonus", "cloud") if any(r.get("layer") == layer for r in results)}
+            log.step("search", tier=",".join(engines) or "none",
+                     tier_kind="cloud" if "tavily" in engines else "local", query=text,
+                     outcome="ok" if results else "empty", hits=len(results), layers=layers, sources=status,
                      total_s=round(time.perf_counter() - started, 3))
             return results
 
@@ -143,7 +155,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     if codex_job:
         job["codex"] = codex_job
     if page_search:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
-        job["pages"] = {"search_url": f"{proxy_url}/search"}
+        job["pages"] = {"search_url": f"{proxy_url}/search", "min_sources": settings.research.web_min_sources}
         job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
@@ -178,10 +190,26 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
                                           encoding="utf-8")
     fallback = sum((s.get("metadata") or {}).get("engine") == "tavily" for s in result.sources)
     result.tavily_sources = fallback
+    for source in result.sources:
+        layer = (source.get("metadata") or {}).get("layer")
+        if layer:
+            result.layer_sources[layer] = result.layer_sources.get(layer, 0) + 1
     log.step("research", **base, outcome="error" if result.error or not result.summary else "ok",
-             elapsed_s=result.elapsed_s, n_sources=len(result.sources), tavily_fallback_sources=fallback, report_chars=len(result.summary),
+             elapsed_s=result.elapsed_s, n_sources=len(result.sources), tavily_fallback_sources=fallback,
+             layer_sources=result.layer_sources, report_chars=len(result.summary),
              error=result.error, report=str(result.report_path) if result.summary else None)
     return result
+
+
+def make_router(settings: Settings, *, offline: bool = False):
+    """The search router from [search] in assistant.toml (see sources.py)."""
+    from .sources import Router
+    cfg = settings.search
+    return Router(kiwix_url=cfg.kiwix_url, kiwix_books=list(cfg.kiwix_books),
+                  live=[] if offline else list(cfg.live),
+                  searxng_url="" if offline or not cfg.searxng_bonus else settings.searxng_url,
+                  cache_dir=Path(settings.runs_dir) / "search-cache", cache_days=cfg.cache_days,
+                  per_source=cfg.per_source)
 
 
 CITATION_GROUP_RE = re.compile(r"\[(\d+(?:\s*,\s*\d+)*)\]")

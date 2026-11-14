@@ -49,7 +49,9 @@ class ResearchSettings:
     embed_model: str = "text-embedding-nomic-embed-text-v1.5"   # served by llama-swap, for the codex index
     embed_url: str = ""                  # empty means the default tier's server
     codex_k: int = 8                     # codex chunks per search
+    codex_min_sources: int = 10          # distinct codex chunks the write-up sees at least (ldr_runner.top_up)
     tavily_fallback: bool = True         # public searxng research asks Tavily when SearXNG returns nothing
+    web_min_sources: int = 8             # distinct web results the write-up sees at least (ldr_runner.top_up)
     web_pages: int = 6                   # searxng results per search, each with page passages; 0 = snippets only
     writer_temperature: float | None = None   # local tiers while writing a report; None keeps the tier's
 
@@ -58,6 +60,25 @@ class ResearchSettings:
             scripts = "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
             self.ldr_python = Path("~/.venvs/ldr") / scripts
         self.ldr_python = Path(self.ldr_python).expanduser()
+
+
+@dataclass
+class SearchSettings:
+    """The local search router (assistant/sources.py), from [search] in assistant.toml."""
+    router: bool = True                  # False: the old order, SearXNG then Tavily then SearXNG topic engines
+    kiwix_url: str = "http://127.0.0.1:8090"
+    kiwix_books: list[str] = field(default_factory=list)   # ZIM names as kiwix-serve knows them; empty: no offline layer
+    live: list[str] = field(default_factory=lambda: ["arxiv", "openalex", "hf_papers", "github",
+                                                     "stackexchange", "hackernews"])
+    searxng_bonus: bool = True           # also ask SearXNG's general engines
+    cache_days: float = 7.0
+    per_source: int = 2                  # hits any one source may place in a search's results
+
+    def __post_init__(self) -> None:
+        from .sources import LIVE_SOURCES   # here, not at the top: sources imports verify, which imports config
+        unknown = set(self.live) - set(LIVE_SOURCES)
+        if unknown:
+            raise ValueError(f"[search] live: unknown sources {sorted(unknown)}; known: {LIVE_SOURCES}")
 
 
 @dataclass
@@ -72,6 +93,7 @@ class Settings:
     model_server: str = "lmstudio"       # "llama-swap" (the project default in assistant.toml) or "lmstudio"
     tiers: dict[str, Tier] = field(default_factory=dict)
     research: ResearchSettings = field(default_factory=ResearchSettings)
+    search: SearchSettings = field(default_factory=SearchSettings)
 
     def tier(self, name: str) -> Tier:
         try:
@@ -96,6 +118,7 @@ def load_settings(path: str | Path = "assistant.toml") -> Settings:
     if settings.model_server not in MODEL_SERVERS:
         raise ValueError(f"model_server must be one of {MODEL_SERVERS}, not {settings.model_server!r}")
     settings.research = ResearchSettings(**raw.get("research", {}))
+    settings.search = SearchSettings(**raw.get("search", {}))
     for name, entry in raw.get("tiers", {}).items():
         settings.tiers[name] = Tier(name=name, **entry)
     for name in (settings.default_tier, settings.backup_tier):

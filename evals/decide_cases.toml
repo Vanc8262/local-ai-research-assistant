@@ -199,6 +199,30 @@ state = "Sentence: The free-threaded build no longer needs a separate installer 
 levels = ["No citation at all", "A citation, but it may not cover the claim", "A citation that clearly covers the claim"]
 expect = "1"
 
+[[case]]
+id = "grade-07"
+use = "eval grading"
+priority = 1
+kind = "noul"
+statement = "The passage supports the claim."
+# The decider doubted this correct claim at p 0.20 in the 2026-11-12 GGUF codex run.
+state = """Claim: The size for Q8_0 is 7.95 GiB.
+Passage: | Measure | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K | Q8_0 |
+|---|---|---|---|---|---|---|
+| size (GiB) | 4.36 | 4.58 | 5.21 | 5.33 | 6.14 | 7.95 |"""
+expect = "true"
+
+[[case]]
+id = "grade-08"
+use = "eval grading"
+priority = 1
+kind = "noul"
+statement = "The passage supports the claim."
+# The decider doubted this correct claim at p 0.53 in the 2026-11-12 GGUF codex run.
+state = """Claim: Q8_0 is described as having very large, extremely low quality loss.
+Passage: { "Q8_0", LLAMA_FTYPE_MOSTLY_Q8_0, " 6.70G, +0.0004 ppl @ 7B - very large, extremely low quality loss - not recommended", },"""
+expect = "true"
+
 # --- P1: bulk labelling: what kind of line is this in a report -----------------------------------
 
 [[case]]

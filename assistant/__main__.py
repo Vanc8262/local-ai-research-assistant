@@ -15,6 +15,7 @@
     python -m assistant verify <run_id>                     check a report's citations against its sources
 python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
+                             [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
     python -m assistant decide probe [-t local]             which decision method works on a local tier
     python -m assistant decide check [-t local -t local-backup] [--debias]
                                                             score the decider on evals/decide_cases.toml
@@ -279,10 +280,14 @@ def _repair(settings, run_dir: Path, log: RunLog, *, tier, reload_every: int = 0
 
 
 def cmd_eval(settings, args) -> int:
+    if args.no_tavily:   # the fully local gate: no keyed search service at all
+        settings.research.tavily_fallback = False
     questions = load_questions(args.questions)
     if args.only:
         questions = [q for q in questions if q.id in args.only]
-    out_dir, rows = run_eval(settings, questions, args.mode or list(MODES), verify_tier=args.verify_tier,
+    # offline mode runs by default only once Kiwix copies are configured
+    modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
+    out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
                               reload=not args.no_reload, runs=args.runs)
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
@@ -452,6 +457,8 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
     evaluate.add_argument("--runs", type=int, default=2, help="runs per question and mode (default 2)")
+    evaluate.add_argument("--no-tavily", action="store_true",
+                          help="never fall back to Tavily, even for these public questions")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
     dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")

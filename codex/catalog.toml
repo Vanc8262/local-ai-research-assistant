@@ -1,6 +1,8 @@
 # Codex first wave. Official free sources only; sizes from HEAD requests on 2026-10-25.
 # kind = "pdf": direct download. kind = "page": one web page, printed to PDF by headless Edge/Chrome.
 # kind = "html": doc site or HTML-only book, skipped for now.
+# kind = "text": a Markdown or source file kept as text, so tables stay whole (a GitHub pull
+# request is fetched as its title and description, without the page around it).
 
 # --- python ---
 [[item]]
@@ -304,7 +306,7 @@ title = "llama.cpp README"
 authors = "ggml-org contributors"
 year = 2026
 url = "https://github.com/ggml-org/llama.cpp/blob/master/README.md"
-kind = "html"
+kind = "text"
 licence = "MIT"
 bytes = 0
 
@@ -315,7 +317,7 @@ title = "llama.cpp quantize README (quantization types, size and perplexity)"
 authors = "ggml-org contributors"
 year = 2026
 url = "https://raw.githubusercontent.com/ggml-org/llama.cpp/master/tools/quantize/README.md"
-kind = "page"
+kind = "text"
 licence = "MIT"
 bytes = 0
 
@@ -326,7 +328,7 @@ title = "llama.cpp pull request 1684: k-quants (new quantization types, sizes an
 authors = "Iwan Kawrakow (ikawrakow)"
 year = 2023
 url = "https://github.com/ggml-org/llama.cpp/pull/1684"
-kind = "page"
+kind = "text"
 licence = "MIT"
 bytes = 0
 
@@ -337,7 +339,7 @@ title = "llama.cpp quantize tool source, June 2023: each quantization type with 
 authors = "ggml-org contributors"
 year = 2023
 url = "https://raw.githubusercontent.com/ggml-org/llama.cpp/master-7487137/examples/quantize/quantize.cpp"
-kind = "page"
+kind = "text"
 licence = "MIT"
 bytes = 7611
 
@@ -348,7 +350,7 @@ title = "GGUF file format specification"
 authors = "ggml-org contributors"
 year = 2023
 url = "https://raw.githubusercontent.com/ggml-org/ggml/master/docs/gguf.md"
-kind = "page"
+kind = "text"
 licence = "MIT"
 bytes = 0
 

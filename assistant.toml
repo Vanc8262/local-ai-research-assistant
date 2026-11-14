@@ -23,6 +23,24 @@ tavily_fallback = true                                 # public questions only: 
 web_pages = 6                                          # searxng results per search, each with page passages; 0 = snippets only
 writer_temperature = 0.3                               # local tiers while writing reports; steadier runs
 
+# The search router (assistant/sources.py) behind --search searxng and --search offline.
+# Layers: offline Kiwix copies on this PC, free public APIs called directly, SearXNG's general engines.
+# No keyed commercial search: Tavily stays a fallback for public questions only (eval --no-tavily turns it off).
+# Optional free keys, from environment variables only: GITHUB_TOKEN, OPENALEX_API_KEY, STACKEXCHANGE_KEY.
+[search]
+router = true
+kiwix_url = "http://127.0.0.1:8090"                    # docker compose up -d kiwix (README, "Offline copies")
+# ZIM names without their date; the newest served file is used. Empty list: no offline layer.
+kiwix_books = ["wikipedia_en_all_nopic", "devdocs_en_python", "devdocs_en_pandas", "devdocs_en_numpy",
+               "devdocs_en_scikit-learn", "devdocs_en_pytorch", "devdocs_en_docker", "devdocs_en_kubernetes",
+               "devdocs_en_terraform", "devdocs_en_git", "devdocs_en_postgresql", "devdocs_en_fastapi",
+               "ai.stackexchange.com_en_all", "datascience.stackexchange.com_en_all",
+               "stats.stackexchange.com_en_all", "stackoverflow.com_en_all"]
+live = ["arxiv", "openalex", "hf_papers", "github", "stackexchange", "hackernews"]
+searxng_bonus = true
+cache_days = 7
+per_source = 2
+
 # Local tiers: llama-swap (or LM Studio) on this PC, same port and model names. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
 [tiers.local]
