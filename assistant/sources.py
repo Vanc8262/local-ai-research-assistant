@@ -50,8 +50,14 @@ CODE = re.compile(r"\b(python|library|package|error|exception|api|function|insta
                   r"aws|azure|gcp|cloud|code|coding|llama\.?cpp|gguf|framework|sql|git|github|pandas|"
                   r"numpy|pytorch|cli|release|version|syntax|compiler|terraform)\b", re.I)
 NEWS = re.compile(r"\b(latest|new|newest|release[sd]?|announc\w*|launch\w*|20\d\d)\b", re.I)
-STOP = set("""a an and are as at be by can do does for from how in is it its of on or that the this to
-what when which who why with vs versus compared difference between main their each one""".split())
+STOP = set("""a an and are as at be by can do does did for from how in is it its of on or that the this to
+what when which who why with vs versus compared comparison comparisons difference differences differ different
+between main their each one these those there into other about more most such like also than then them they
+specific specifically technical mechanism current state art practical real world empirical empirically trade
+offs off beyond general primary precise detailing across during standard explain explained mean means use used
+using work works affect affects performance metrics new latest features feature key exactly particular various
+typical typically overall approach approaches method methods way ways compare respect regarding terms well
+measurable significant significantly provide provides stable""".split())
 
 
 class RateGate:
@@ -71,9 +77,19 @@ GATES = {"arxiv": RateGate(3.1), "openalex": RateGate(1.0), "hf_papers": RateGat
          "searxng": RateGate(4.0), "kiwix": RateGate(0.0)}
 
 
+def _technical(word: str) -> bool:
+    """Names rather than words: QLoRA, Q4_K_M, llama.cpp, Self-RAG, GGUF, 3.15."""
+    return bool(re.search(r"\d|_|\w\.\w|[A-Z]{2}", word))
+
+
 def keywords(query: str, limit: int = 6) -> list[str]:
-    words = re.findall(r"[A-Za-z0-9][\w.+-]*", query)
-    return [w for w in words if w.lower() not in STOP][:limit]
+    """The query's distinctive words, names first, for search APIs that match every word.
+    LDR writes long questions; kiwix-serve and arXiv return nothing for those, and find the
+    right pages from two to four of their words (measured on the PC, 2026-11-13)."""
+    words = [w.rstrip(".-") for w in re.findall(r"[A-Za-z0-9][\w.+-]*", query)]
+    words = [w for w in dict.fromkeys(words) if w and w.lower() not in STOP and len(w) > 1]
+    names = [w for w in words if _technical(w)]
+    return (names + [w for w in words if w not in names])[:limit]
 
 
 def pick_live(query: str, allowed: tuple[str, ...] | list[str] = LIVE_SOURCES) -> list[str]:
@@ -103,9 +119,11 @@ def _hit(title: str, url: str, content: str, engine: str, layer: str) -> dict:
 # --- live sources -------------------------------------------------------------------------------
 
 def arxiv(client: httpx.Client, query: str, k: int) -> list[dict]:
-    words = keywords(query, 4)
+    words = keywords(query, 3)
     atom = "{http://www.w3.org/2005/Atom}"
-    for search in (" AND ".join(f"all:{w}" for w in words), "all:" + " ".join(words)):
+    tries = [" AND ".join(f"all:{w}" for w in words[:n]) for n in (3, 2) if len(words) >= n] or \
+            [f"all:{w}" for w in words[:1]]
+    for search in tries:
         resp = client.get("https://export.arxiv.org/api/query",
                           params={"search_query": search, "max_results": k, "sortBy": "relevance"})
         resp.raise_for_status()
@@ -126,7 +144,7 @@ def abstract(inverted: dict | None) -> str:
 
 
 def openalex(client: httpx.Client, query: str, k: int) -> list[dict]:
-    params = {"search": query, "per_page": k,
+    params = {"search": " ".join(keywords(query, 5)), "per_page": k,
               "select": "id,doi,title,abstract_inverted_index,primary_location"}
     if os.environ.get("OPENALEX_API_KEY"):
         params["api_key"] = os.environ["OPENALEX_API_KEY"]
@@ -142,7 +160,7 @@ def openalex(client: httpx.Client, query: str, k: int) -> list[dict]:
 
 
 def hf_papers(client: httpx.Client, query: str, k: int) -> list[dict]:
-    resp = client.get("https://huggingface.co/api/papers/search", params={"q": query})
+    resp = client.get("https://huggingface.co/api/papers/search", params={"q": " ".join(keywords(query, 4))})
     resp.raise_for_status()
     out = []
     for item in resp.json()[:k]:
@@ -200,11 +218,18 @@ def kiwix(client: httpx.Client, base_url: str, books: list[str], query: str, k: 
     """kiwix-serve's full-text search over the given ZIM files at once (all English, as it
     requires), ranked by kiwix-serve. Its snippets are weak, so callers fetch the article
     itself, also from kiwix-serve on this PC."""
-    params = [("books.name", book) for book in books] + [("pattern", query), ("format", "xml"),
-                                                         ("pageLength", str(k))]
-    resp = client.get(f"{base_url.rstrip('/')}/search", params=params)
-    resp.raise_for_status()
-    root = ET.fromstring(resp.text)
+    words = keywords(query, 3)
+    root = None
+    for n in range(len(words), 0, -1):   # kiwix-serve matches every word: drop the last until it finds pages
+        params = [("books.name", book) for book in books] + [("pattern", " ".join(words[:n])), ("format", "xml"),
+                                                             ("pageLength", str(k))]
+        resp = client.get(f"{base_url.rstrip('/')}/search", params=params)
+        resp.raise_for_status()
+        root = ET.fromstring(resp.text)
+        if root.find(".//item") is not None:
+            break
+    if root is None:
+        return []
     out = []
     for item in root.iter("item"):
         link = item.findtext("link") or ""

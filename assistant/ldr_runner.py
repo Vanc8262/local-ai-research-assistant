@@ -6,7 +6,8 @@ from the assistant package. The job arrives as JSON on stdin:
 
     {"query": "...", "mode": "quick" | "report", "overrides": {...}, "out": "path/result.json",
      "codex": {"index_dir": "...", "embed_url": "...", "embed_model": "...", "k": 8,
-               "min_sources": 10}}
+               "min_sources": 10},
+     "pages": {"search_url": "...", "min_sources": 8}}
 
 "codex" is optional. When present, the codex index (see codex_index.py) is handed to
 LDR as a retriever named "codex", which the overrides select as the search tool. The
@@ -79,6 +80,8 @@ def main() -> int:
             sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # for `import assistant.verify`
             from web_pages import load_retriever as load_pages
             kwargs["retrievers"] = {"pages": load_pages(job["pages"]["search_url"])}
+            if job["pages"].get("min_sources"):
+                keep_at_least(int(job["pages"]["min_sources"]))
         run = generate_report if job.get("mode") == "report" else quick_summary
         result = run(job["query"], **kwargs)
     except Exception as exc:   # report any LDR failure to the caller instead of a traceback

@@ -125,3 +125,27 @@ def test_search_settings_load_and_reject_unknown_sources(tmp_path):
         assert "tavily" in str(exc)
     else:
         raise AssertionError("tavily is not a free public source")
+
+
+def test_keywords_put_names_first_and_drop_question_words():
+    from assistant.sources import keywords
+    assert keywords("What do the GGUF quantization types Q4_K_M, Q5_K_M and Q8_0 mean in llama.cpp?", 6) == [
+        "GGUF", "Q4_K_M", "Q5_K_M", "Q8_0", "llama.cpp", "quantization"]
+    assert keywords("How does Self-RAG differ from standard retrieval-augmented generation?", 3) == [
+        "Self-RAG", "retrieval-augmented", "generation"]
+    assert keywords("How does QLoRA reduce memory use compared with LoRA?", 2) == ["QLoRA", "LoRA"]
+
+
+def test_kiwix_drops_words_until_it_finds_pages():
+    from assistant.sources import kiwix
+    patterns = []
+
+    def handler(request):
+        patterns.append(request.url.params["pattern"])
+        if request.url.params["pattern"] == "GGUF":
+            return httpx.Response(200, text=KIWIX)
+        return httpx.Response(200, text="<rss><channel></channel></rss>")
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        hits = kiwix(client, "http://127.0.0.1:8090", ["wikipedia_en_all_nopic_2026-06"],
+                     "What do the GGUF quantization types Q4_K_M mean?", 3)
+    assert patterns == ["GGUF Q4_K_M quantization", "GGUF Q4_K_M", "GGUF"] and len(hits) == 2

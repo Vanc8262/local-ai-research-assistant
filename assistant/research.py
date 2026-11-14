@@ -155,7 +155,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     if codex_job:
         job["codex"] = codex_job
     if page_search:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
-        job["pages"] = {"search_url": f"{proxy_url}/search"}
+        job["pages"] = {"search_url": f"{proxy_url}/search", "min_sources": settings.research.web_min_sources}
         job["overrides"]["search.tool"] = "pages"
     env = {**os.environ, "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.

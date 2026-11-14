@@ -51,6 +51,7 @@ class ResearchSettings:
     codex_k: int = 8                     # codex chunks per search
     codex_min_sources: int = 10          # distinct codex chunks the write-up sees at least (ldr_runner.top_up)
     tavily_fallback: bool = True         # public searxng research asks Tavily when SearXNG returns nothing
+    web_min_sources: int = 8             # distinct web results the write-up sees at least (ldr_runner.top_up)
     web_pages: int = 6                   # searxng results per search, each with page passages; 0 = snippets only
     writer_temperature: float | None = None   # local tiers while writing a report; None keeps the tier's
 
