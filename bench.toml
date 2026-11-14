@@ -5,7 +5,7 @@
 # 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and every
 # request waited about 2.3 s before falling back, which inflated time to first token.
 base_url = "http://127.0.0.1:1234/v1"   # llama-server's OpenAI-compatible API
-api_key = "local"                       # any text; llama-server runs without a key
+# No api_key here: llama-server runs without one. A server that needs a key reads it from BENCH_API_KEY.
 timeout_s = 900
 
 [defaults]
