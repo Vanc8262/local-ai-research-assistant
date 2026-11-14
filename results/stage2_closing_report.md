@@ -1,16 +1,16 @@
 # Stage 2 closing report: Research
 
-**Status:** ready for Van's approval (updated 2026-11-14, after the hybrid rerun). The fully local search work Van asked for on 2026-11-13 is done. It fell just short of its own gate, so, as Van chose on 2026-11-14, Stage 2 closes with Tavily kept as a fallback in local mode.
+**Status:** FINAL. Stage 2 is CLOSED (2026-11-14). Van merged the sign-off PR (#26) and closed the stage on these results and limits. The fully local search work Van asked for on 2026-11-13 is done. It fell just short of its own gate, so, as Van chose on 2026-11-14, Stage 2 closed with Tavily kept as a fallback in local mode.
 **Date:** 2026-11-14
-**Code:** PRs #23 and #24 are merged. PR #25 (the local search router and the GGUF codex fixes) merged on 2026-11-14. On main, `pytest` gives 289 passed.
+**Code:** PRs #23, #24, #25 (the local search router and the GGUF codex fixes) and #26 (sign-off) are merged. On main, `pytest` gives 289 passed.
 
-## Recommendation
+## Outcome
 
-Close Stage 2. Stage 2 asked for cited reports in which every claim traces back to a source. Local, hybrid and codex modes all meet that on their latest runs: local passes 9 of 10 with Tavily, and codex passes 10 of 10. The GGUF codex failure from the earlier draft is fixed.
+Stage 2 is closed. Stage 2 asked for cited reports in which every claim traces back to a source. Local, hybrid and codex modes all meet that on their latest runs: local passes 9 of 10 with Tavily, and codex passes 10 of 10. The GGUF codex failure from the earlier draft is fixed.
 
 Local mode works without Tavily, but less well. A run with Tavily switched off passed 8 of 10. Most of its sources came from offline copies and free public APIs, and none came from a commercial search service. That is one short of the 9 of 10 that the local search design set as its gate. Tavily therefore stays as a documented fallback in local mode (caveat 1).
 
-The hybrid rerun on the current main passed 10 of 10 on 2026-11-14, so no condition remains before sign-off.
+The hybrid rerun on the current main passed 10 of 10 on 2026-11-14, so no condition remained at sign-off.
 
 A pass means the checker accepts what is left of a report. It does not mean every sentence is true. The checker's model is sometimes generous, so hand review is still worthwhile.
 
@@ -30,7 +30,7 @@ The eval covers 5 questions with 2 runs each: python-315, lora-vs-qlora, aws-pil
 | Mode | What runs | Latest result | Run | Expected facts | Claims removed | Lowest free RAM |
 |---|---|---|---|---|---|---|
 | **Local** | Gemma 4 E4B writes, on the PC | **9 of 10** | 2026-11-13, `eval-20261113-113015-8f7ed7` | 100% | 3% | 5.0 GB |
-| **Hybrid** | Gemini writes from Tavily search (public only) | **10 of 10**, 5 of 5 questions passed on both runs | 2026-11-14, `eval-20261114-062621-6e2c0d` | 100% | 6% | 4.2 GB |
+| **Hybrid** | Gemini writes from Tavily search (public only) | **10 of 10**, 5 of 5 questions passed on both runs | 2026-11-14, `eval-20261114-062621-6e2c0d` | 100% | 6% | 4.17 GB |
 | **Local, Tavily off** | Gemma writes from offline copies, free APIs and SearXNG | **8 of 10** | 2026-11-14, `eval-20261114-050849-f454a6` | 90% | 4% | 4.4 GB |
 | **Codex** | Gemma writes from the local document index | **10 of 10** | 2026-11-13, `eval-20261113-183211-75c5f1` | – | – | – |
 
@@ -76,19 +76,19 @@ Results files: `stage2_hybrid_2026-11-14.md`, `stage2_eval_2026-11-14.md` (Tavil
 - The local decider. Stage 3 can use it to classify steps and spot destructive shell commands.
 - The search router, with offline copies on D:\kiwix (refreshed with `scripts/get_kiwix.ps1`) and free APIs, behind the same gateway `/search`.
 
-**Open items, in the order agreed on 2026-11-12:**
+**Open items after close:**
 1. Bench code suites on the llama.cpp setup. They have not run since LM Studio was removed. They run model-written code without a sandbox, so they need Van to ask for them.
-2. Heretic Gemma 4 E4B bench, then Van's picks for the model vault.
-3. Stage 3 plan: the code-editing loop on a sandbox repo, with a gate of at least 6 of 10 tasks passing unattended and failures stopping cleanly, plus the Headroom A/B.
-4. Separately: research [agent-rules-books](https://github.com/ciembor/agent-rules-books) for the assistant's rules (its own thread).
+2. Heretic Gemma 4 E4B bench, then Van's picks for the model vault. Neither blocks the Stage 3 build.
+3. Stage 3: the code-editing loop, designed in `docs/superpowers/specs/2026-11-13-stage3-implementation-design.md` (20 tasks, Docker sandbox, Aider, gate of 12 of 20 in each of two runs, with the Headroom and agent-rules-books arms run one at a time).
+4. Hand-check a sample of the claims hybrid repair removed on 2026-11-14 (caveat 2), if hybrid becomes the default writer for public runs.
 
 **Search, for later:** to drop Tavily entirely, the next steps are to keep tables whole when web pages are fetched, and to add a check for missing expected facts that sends the writer back for another search. Stage 4's router can treat Tavily as a free cloud tier with a quota. The design is in `research/ideas/local-search-path-design.md`.
 
 ## Approval
 
-- [ ] Van approves closing Stage 2 on these results and limits.
-- [ ] Van accepts Tavily as a documented fallback in local mode (agreed on 2026-11-14, if it does not reach 9 of 10).
+- [x] Van approves closing Stage 2 on these results and limits (2026-11-14).
+- [x] Van accepts Tavily as a documented fallback in local mode (2026-11-14).
 - [x] Van merges PR #25 (merged 2026-11-14).
 - [x] Hybrid rerun on the current main: 10 of 10 (2026-11-14).
 
-This report is added to `results/` in the sign-off PR. Merging that PR closes Stage 2.
+- [x] Sign-off PR #26 merged (2026-11-14). Stage 2 is closed.
