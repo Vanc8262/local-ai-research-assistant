@@ -74,7 +74,8 @@ CASES: list[Case] = [
          [r"todo\.md"], "There is one file: notes/todo.md."),
     Case("single-07", "single",
          "Put 'Dentist' on my calendar for 2026-11-03 at 14:30, lasting 45 minutes.",
-         [event("Dentist", "2026-11-03", "14:30", 45, "dentist")], [], "Dentist is on your calendar."),
+         [event("Dentist", "2026-11-03", "14:30", 45, "dentist")], [], "Dentist is on your calendar.",
+         exact={"create_event": 1}),
     Case("single-08", "single", "How warm is it in Denver in fahrenheit?",
          [Expect("get_weather", {"city": "Denver", "unit": "fahrenheit"})],
          [r"\b37(\.4)?\b"], "It is 37.4 °F in Denver."),
@@ -90,7 +91,7 @@ CASES: list[Case] = [
     Case("notool-02", "no_tool", "Rewrite this sentence in the passive voice: 'The cat chased the mouse.'",
          final=[r"was chased"], answer="The mouse was chased by the cat.", no_tools=True),
     Case("notool-03", "no_tool", "Explain in one sentence what a unit test is.",
-         final=[r"\btest"], answer="A unit test checks one small piece of code in isolation.", no_tools=True),
+         final=[r"\bunit tests?\b", r"\b(code|functions?|methods?|components?|modules?)\b"], answer="A unit test checks one small piece of code in isolation.", no_tools=True),
     Case("notool-04", "no_tool",
          "I might check the weather in Paris later. Don't look anything up now, just reply OK.",
          final=[r"\bok(ay)?\b"], answer="OK", no_tools=True),
@@ -98,7 +99,8 @@ CASES: list[Case] = [
     # -- arguments must be converted into the schema's format -------------------
     Case("args-01", "arguments",
          "Book 'Team sync' for November 9th, 2026 at 9am. It runs an hour and a half.",
-         [event("Team sync", "2026-11-09", "09:00", 90, "team sync")], [], "Team sync is booked."),
+         [event("Team sync", "2026-11-09", "09:00", 90, "team sync")], [], "Team sync is booked.",
+         exact={"create_event": 1}),
     Case("args-02", "arguments", "whats it like in lagos?? use Fahrenheit pls",
          [Expect("get_weather", {"city": "Lagos", "unit": "fahrenheit"})],
          [r"\b8[78]\b"], "It is 87.8 °F in Lagos."),
@@ -172,7 +174,8 @@ CASES: list[Case] = [
     Case("recover-04", "recovery",
          "Schedule 'Review' on 2026-02-30 at 10:00 for 30 minutes. If the calendar rejects "
          "that date, use the last day of that month instead.",
-         [event("Review", "2026-02-28", "10:00", 30, "review")], [], "Review is scheduled for 2026-02-28."),
+         [event("Review", "2026-02-28", "10:00", 30, "review")], [], "Review is scheduled for 2026-02-28.",
+         exact={"create_event": 1}),
 ]
 
 assert len(CASES) == 30 and len({case.id for case in CASES}) == 30

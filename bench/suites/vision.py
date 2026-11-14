@@ -91,7 +91,10 @@ def build_items() -> list[dict]:
         {"id": "bar-highest", "question": "Which region has the highest value? Answer with the region name only.",
          "image": bar_chart("Units sold by region", ["North", "South", "East", "West", "Central"],
                             [42, 67, 55, 38, 61], show_values=False),
-         "answer": r"\bsouth\b", "reject": r"\b(north|east|west|central)\b"},
+         # South must be the first region named, with no hedge: "South, not North" passes,
+         # "North or South" and "South or Central" fail
+         "answer": r"^(?:(?!\b(?:north|east|west|central)\b).)*\bsouth\b",
+         "reject": r"\bsouth\W*(?:or|and|/)\W*(?:north|east|west|central)\b"},
         {"id": "bar-read-value", "question": "What is the value for Mar? Answer with the number only.",
          "image": bar_chart("Monthly signups", ["Jan", "Feb", "Mar", "Apr", "May"],
                             [120, 135, 180, 160, 210], show_values=True),
@@ -99,7 +102,10 @@ def build_items() -> list[dict]:
         {"id": "line-peak", "question": "In which month does the line reach its highest point? Answer with the month only.",
          "image": line_chart("Support tickets per month", ["Jan", "Feb", "Mar", "Apr", "May", "Jun"],
                              [12, 18, 15, 27, 22, 19]),
-         "answer": r"\bapr(il)?\b", "reject": r"\b(jan|feb|mar|jun)"},
+         # April must be the first month named, and May (capitalised, so "may peak" is fine) is
+         # never right
+         "answer": r"^(?:(?!\b(?:jan|feb|mar|jun|jul|aug|sep|oct|nov|dec)\w*\b).)*\bapr(?:il)?\b",
+         "reject": r"(?-i:\bMay\b)|\bapr(?:il)?\W*(?:or|and|/)\W*\w"},
         {"id": "table-cell", "question": "According to the table, what is the speed for Bravo? Answer with the number only.",
          "image": table_image("Model comparison", ["Model", "Context", "Speed (tok/s)"],
                               [["Alpha", "8K", "41"], ["Bravo", "16K", "33"], ["Cedar", "32K", "27"]]),
@@ -115,7 +121,9 @@ def build_items() -> list[dict]:
              '    totals[key] += float(row["amount"])',
              "ValueError: could not convert string to float: 'n/a'",
          ]),
-         "answer": r"valueerror(?s:.*)\b17\b|\b17\b(?s:.*)valueerror", "reject": None},
+         # ValueError, and 17 given as the line (of summary.py), not just any "17" in the answer
+         "answer": r"(?s)^(?=.*valueerror)(?=.*(?:\bline\s*17\b|summary\.py\D{0,20}\b17\b|\b17\b\D{0,20}summary\.py))",
+         "reject": None},
     ]
 
 
@@ -126,7 +134,7 @@ def to_data_url(image: Image.Image) -> str:
 
 
 def is_correct(item: dict, answer: str) -> bool:
-    if not re.search(item["answer"], answer, re.IGNORECASE):
+    if not re.search(item["answer"], answer.strip(), re.IGNORECASE):
         return False
     return not (item["reject"] and re.search(item["reject"], answer, re.IGNORECASE))
 

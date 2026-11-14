@@ -81,6 +81,11 @@ def test_vision_items_and_checks():
     assert not vision.is_correct(check["bar-read-value"], "210")
     assert vision.is_correct(check["line-peak"], "The line may peak in Apr.")
     assert not vision.is_correct(check["line-peak"], "March")
+    assert vision.is_correct(check["bar-highest"], "South, not North")      # eval review 2026-11-14
+    assert not vision.is_correct(check["bar-highest"], "North or South")
+    assert not vision.is_correct(check["line-peak"], "May")
+    assert not vision.is_correct(check["line-peak"], "April or May")
+    assert not vision.is_correct(check["terminal-error"], "ValueError at line 42; 17 rows were read")
     assert vision.is_correct(check["terminal-error"], "Line 17 raised a ValueError.")
     assert not vision.is_correct(check["terminal-error"], "ValueError on line 42")
 
