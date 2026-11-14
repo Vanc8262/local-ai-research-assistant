@@ -15,7 +15,8 @@ runs `runs` times (2 by default), because one run swings a lot.
 
 The support check is the local model's verdict plus a second opinion from the decider
 (assistant/decide.py): a "supported" it doubts drops to "partial". Free RAM is sampled
-every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md.
+every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md, and
+manifest.json records what the eval ran with (assistant/manifest.py).
 """
 from __future__ import annotations
 
@@ -35,6 +36,7 @@ from .sysmon import Timeline
 from .config import Settings
 from .decide import Decider
 from .gateway import Gateway
+from .manifest import build_manifest, write_manifest
 from .repair import RepairError, repair_run
 from .research import run_research
 from .runlog import RunLog, new_run_id, read_run
@@ -128,9 +130,12 @@ def _llama_swap_unload(base_url: str, post) -> None:
 
 def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
              verify_tier: str | None = None, reload: bool = False, runner=None, transport=None,
-             reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0) -> tuple[Path, list[dict]]:
+             reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0,
+             questions_path: str | Path | None = None) -> tuple[Path, list[dict]]:
     out_dir = Path(settings.runs_dir) / f"eval-{new_run_id()}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    write_manifest(out_dir, build_manifest(settings, modes=modes, runs=runs, question_ids=[q.id for q in questions],
+                                           questions_path=questions_path))
     rows = []
     with Timeline(out_dir / "ram.csv", interval_s=ram_interval_s) as ram:
         for question in questions:

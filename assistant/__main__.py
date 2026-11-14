@@ -301,7 +301,7 @@ def cmd_eval(settings, args) -> int:
     # offline mode runs by default only once Kiwix copies are configured
     modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
     out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
-                              reload=not args.no_reload, runs=args.runs)
+                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions)
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1

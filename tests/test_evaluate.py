@@ -242,3 +242,25 @@ def test_rescore_counts_facts_again_on_the_body_and_reapplies_the_gate(tmp_path)
     (new,) = rescore(out_dir, [question])
     assert (new["gate"], new["gate_new"], new["facts_new"]) == ("pass", "fail", 0.5)
     assert "1 of 1 passed as run, 0 of 1 with body-only facts" in (out_dir / "rescore.md").read_text(encoding="utf-8")
+
+
+def test_eval_writes_a_manifest_without_keys(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_GEMINI_KEY", "gemini-test-key")
+    gguf = tmp_path / "gemma.gguf"
+    gguf.write_bytes(b"GGUF" + bytes(100))
+    monkeypatch.setenv("GEMMA_GGUF", str(gguf))
+    monkeypatch.delenv("QWEN_GGUF", raising=False)
+    monkeypatch.delenv("NOMIC_GGUF", raising=False)
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    questions = ROOT / "evals" / "research_questions.toml"
+    out_dir, _ = run_eval(settings_for(tmp_path), [Question(id="py", text="q")], ["local"],
+                          runner=[sys.executable, str(script)], transport=transport([]), runs=1,
+                          questions_path=questions)
+    text = (out_dir / "manifest.json").read_text(encoding="utf-8")
+    manifest = json.loads(text)
+    assert manifest["questions"] == ["py"] and manifest["modes"] == ["local"] and manifest["runs"] == 1
+    assert manifest["tiers"]["gemini"]["model"] == "gemini-2.5-flash"
+    assert manifest["gguf"]["GEMMA_GGUF"]["bytes"] == 104 and len(manifest["gguf"]["GEMMA_GGUF"]["sha256"]) == 64
+    assert len(manifest["questions_file"]["sha256"]) == 64 and "search_cache_version" in manifest
+    assert "gemini-test-key" not in text
