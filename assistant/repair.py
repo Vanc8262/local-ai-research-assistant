@@ -94,7 +94,10 @@ class _CheckedGateway:
         try:
             answer = self.gateway.ask(*args, **kwargs)
             if answer.error and self.reloader:
-                self.reloader()
+                try:
+                    self.reloader()
+                except Exception as exc:   # e.g. the model server is down too; put the report back
+                    raise RepairError(f"{answer.error}; reloading the model failed: {exc}") from None
                 answer = self.gateway.ask(*args, **kwargs)
         except (PrivacyError, TierNotReady) as exc:
             raise RepairError(str(exc)) from None

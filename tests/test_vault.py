@@ -261,6 +261,8 @@ def test_import_pick_needs_path_and_license(tmp_path):
         vault.load_picks(write_picks(tmp_path, PICKS + PICKS))
 
 
-def test_shipped_vault_toml_has_no_picks_yet():
+def test_shipped_vault_toml_is_valid():
+    """Only Van picks models for vault.toml; this checks the file is well formed, whatever it holds."""
     from pathlib import Path
-    assert vault.load_picks(Path(__file__).resolve().parent.parent / "vault.toml") == []
+    picks = vault.load_picks(Path(__file__).resolve().parent.parent / "vault.toml")
+    assert isinstance(picks, list)

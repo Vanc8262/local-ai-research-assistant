@@ -28,12 +28,15 @@ def recording_transport(seen: list):
     return httpx.MockTransport(handler)
 
 
-def test_shipped_config_loads():
-    settings = load_settings(ROOT / "assistant.toml")
-    assert settings.default_tier == "local" and settings.backup_tier == "local-backup"
-    assert settings.tier("local").model == "gemma-4-e4b-qat"
-    assert settings.tier("gemini").kind == "cloud" and settings.tier("gemini").api_key_env == "GEMINI_API_KEY"
-    assert all("127.0.0.1" in t.base_url for t in settings.tiers.values() if t.kind == "local")
+def test_shipped_config_has_a_safe_structure():
+    """Checks the structure of assistant.toml, not its picks, so changing a model never breaks it."""
+    settings = load_settings(ROOT / "assistant.toml")   # parses; the default and backup tiers exist
+    assert settings.tier(settings.default_tier).kind == "local"   # an unflagged prompt stays on the PC
+    local = [t for t in settings.tiers.values() if t.kind == "local"]
+    cloud = [t for t in settings.tiers.values() if t.kind == "cloud"]
+    assert local and all("127.0.0.1" in t.base_url for t in local)   # loopback, without the localhost IPv6 delay
+    # keys from environment variables only (a tier has no field for the key itself)
+    assert all(t.api_key_env and t.base_url.startswith("https://") for t in cloud)
 
 
 def test_unknown_kind_is_rejected():
