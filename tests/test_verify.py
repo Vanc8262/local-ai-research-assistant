@@ -36,14 +36,14 @@ SOURCES = [
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     return settings
 
 
 def transport(prompts: list):
     """Serves the cited pages, and plays a model that always says "supported" with a quote."""
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             prompts.append(prompt)
             quote = ("the new lazy keyword defers loading a module until first use" if "lazy" in prompt
@@ -113,7 +113,7 @@ def test_a_quote_the_source_does_not_contain_is_not_support(tmp_path):
     settings = settings_for(tmp_path)
 
     def invented(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             answer = json.dumps({"verdict": "supported", "quote": "Lazy imports make startup 50% faster."})
             return httpx.Response(200, content=fake_model.sse({"content": answer}))
         return httpx.Response(200, text=PAGES["/3/whatsnew/3.15.html"], headers={"content-type": "text/html"})
@@ -160,7 +160,7 @@ def test_snippet_is_used_when_the_page_is_boilerplate_and_unparsed_replies_are_r
     prompts = []
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompts.append(json.loads(request.content)["messages"][0]["content"])
             return httpx.Response(200, content=fake_model.sse({"content": next(replies)}))
         return httpx.Response(200, text="<p>YouTube About Press Copyright</p>", headers={"content-type": "text/html"})
@@ -178,7 +178,7 @@ def test_unparsed_reply_is_kept_for_diagnosis(tmp_path):
     (run_dir / "report.md").write_text("Python 3.15 adds lazy imports through a keyword [1].\n", encoding="utf-8")
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             return httpx.Response(200, content=fake_model.sse({"content": "I am not sure."}))
         return httpx.Response(200, text=PAGES["/3/whatsnew/3.15.html"], headers={"content-type": "text/html"})
 
@@ -217,7 +217,7 @@ def test_sources_that_each_cover_part_of_a_list_are_judged_together(tmp_path):
     prompts = []
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             prompts.append(prompt)
             if "support it together" in prompt:
@@ -256,7 +256,7 @@ def test_verification_samples_at_temperature_zero(tmp_path):
     settings.tiers["local"].temperature = 1.0   # the tier's writing preset
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             bodies.append(json.loads(request.content))
         return transport([]).handle_request(request)
 

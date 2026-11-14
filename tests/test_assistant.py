@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path, default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
     return settings
@@ -51,7 +51,7 @@ def test_same_prompt_on_two_tiers_is_logged(tmp_path, monkeypatch):
     for tier in ("local", "gemini"):
         assert gateway.ask(tier, messages, purpose="compare", private=False).content == "ready"
 
-    assert [r.url.host for r in seen] == ["local", "cloud"]
+    assert [r.url.host for r in seen] == ["localhost", "cloud"]
     assert seen[1].headers["authorization"] == "Bearer secret-123"
     steps = [r for r in read_run(log.path) if r["event"] == "step"]
     assert [(s["tier"], s["tier_kind"], s["outcome"]) for s in steps] == [
@@ -125,3 +125,14 @@ api_key_env = "TEST_GEMINI_KEY"
     assert "blocked: tier 'gemini' leaves this PC" in out and "skipped" not in out
     (run,) = (tmp_path / "runs").glob("*.jsonl")
     assert [r.get("outcome") for r in read_run(run)] == [None, "blocked"]
+
+
+def test_a_local_tier_must_be_on_this_pc():
+    """A copied tier block with kind = "local" and a remote URL would send private prompts away."""
+    for url in ("http://127.0.0.1:1234/v1", "http://localhost:1234/v1", "http://[::1]:1234/v1"):
+        Tier(name="ok", kind="local", base_url=url, model="m")
+    for url in ("https://generativelanguage.googleapis.com/v1beta/openai", "http://192.168.1.20:1234/v1",
+                "http://127.0.0.1.example.com/v1"):
+        with pytest.raises(ValueError, match="must be on this PC"):
+            Tier(name="bad", kind="local", base_url=url, model="m")
+    Tier(name="cloud", kind="cloud", base_url="https://api.example.com/v1", model="m", api_key_env="K")

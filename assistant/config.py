@@ -6,9 +6,15 @@ import sys
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 KINDS = ("local", "cloud")
 MODEL_SERVERS = ("lmstudio", "llama-swap")
+LOOPBACK = ("127.0.0.1", "localhost", "::1")   # hosts that are this PC
+
+
+def is_loopback(url: str) -> bool:
+    return urlparse(url).hostname in LOOPBACK
 
 
 @dataclass
@@ -27,6 +33,11 @@ class Tier:
     def __post_init__(self) -> None:
         if self.kind not in KINDS:
             raise ValueError(f"tier {self.name!r}: kind must be one of {KINDS}, not {self.kind!r}")
+        # Private prompts go to any "local" tier, so a local tier must really be on this PC:
+        # a copied block or a typo with a remote URL would otherwise send them off it.
+        if self.kind == "local" and not is_loopback(self.base_url):
+            raise ValueError(f"tier {self.name!r}: a local tier's base_url must be on this PC "
+                             f"({', '.join(LOOPBACK)}), not {self.base_url!r}")
         self.label = self.label or self.name
         self.base_url = self.base_url.rstrip("/")
 

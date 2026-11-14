@@ -30,7 +30,7 @@ json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], 
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
     return settings
@@ -56,7 +56,7 @@ def test_research_runs_ldr_through_the_gateway(tmp_path):
                           runner=fake_runner(tmp_path), transport=upstream(seen))
 
     assert result.error is None and result.summary == "Lazy imports are new [1]"
-    assert seen == ["local"]
+    assert seen == ["localhost"]
     report = result.report_path.read_text(encoding="utf-8")
     assert report.startswith("# What is new in Python 3.15?") and "https://docs.python.org/3/whatsnew/3.15.html" in report
     assert json.loads((result.run_dir / "sources.json").read_text())[0]["index"] == "1"

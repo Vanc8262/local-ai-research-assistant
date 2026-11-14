@@ -116,7 +116,7 @@ runs_dir = "{(tmp_path / 'runs').as_posix()}"
 codex_dir = "{(tmp_path / 'codex').as_posix()}"
 [tiers.local]
 kind = "local"
-base_url = "http://local/v1"
+base_url = "http://localhost/v1"
 model = "m"
 ''', encoding="utf-8")
     assert main(["--config", str(config), "codex", "list", "--catalog", str(write_catalog(tmp_path))]) == 0

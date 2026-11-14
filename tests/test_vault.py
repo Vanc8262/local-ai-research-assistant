@@ -171,7 +171,7 @@ runs_dir = "{(tmp_path / 'runs').as_posix()}"
 vault_dir = "{root.as_posix()}"
 [tiers.local]
 kind = "local"
-base_url = "http://local/v1"
+base_url = "http://localhost/v1"
 model = "m"
 ''', encoding="utf-8")
     good, bad = tmp_path / "good.gguf", tmp_path / "bad.gguf"
