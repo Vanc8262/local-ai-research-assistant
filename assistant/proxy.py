@@ -77,7 +77,13 @@ class Proxy:
             if result.error and self._can_fall_back(tier):
                 options["purpose"] = f"{PURPOSE} (fallback from {tier.name})"
                 tier = self.settings.tier(self.settings.default_tier)
-                result = self.gateway.ask(tier.name, body["messages"], **options, temperature=self._temperature(tier))
+                try:
+                    result = self.gateway.ask(tier.name, body["messages"], **options,
+                                              temperature=self._temperature(tier))
+                except PrivacyError as exc:
+                    raise ProxyError(403, str(exc), "privacy_blocked") from None
+                except TierNotReady as exc:
+                    raise ProxyError(503, str(exc), "tier_not_ready") from None
         if result.error:
             raise ProxyError(502, result.error, "upstream_error")
         return tier, result

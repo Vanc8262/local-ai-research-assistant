@@ -13,7 +13,7 @@
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
-python -m assistant repair <run_id>                     fix or remove the claims that failed the check
+    python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
     python -m assistant decide probe [-t local]             which decision method works on a local tier

@@ -141,3 +141,18 @@ def test_writer_temperature_applies_to_local_tiers_only(tmp_path, monkeypatch):
     proxy.complete({"model": "cloud", "messages": [{"role": "user", "content": "hi"}]})
     gateway.close()
     assert [b["temperature"] for b in bodies] == [0.3, 1.0]
+
+
+def test_a_fallback_tier_that_is_not_ready_returns_503(tmp_path, monkeypatch):
+    """The fallback call used to be unwrapped, so TierNotReady dropped the connection."""
+    from assistant.proxy import ProxyError
+    monkeypatch.delenv("TEST_GEMINI_KEY", raising=False)
+    monkeypatch.delenv("TEST_LOCAL_KEY", raising=False)
+    settings = settings_for(tmp_path)
+    settings.tiers["local"].api_key_env = "TEST_LOCAL_KEY"   # a llama-server started with --api-key
+    gateway = Gateway(settings, RunLog(tmp_path), transport=upstream([]))
+    proxy = Proxy(settings, gateway, private=False)
+    with pytest.raises(ProxyError) as caught:
+        proxy.complete({"model": "gemini", "messages": [{"role": "user", "content": "hi"}]})
+    assert caught.value.status == 503 and caught.value.kind == "tier_not_ready"
+    gateway.close()
