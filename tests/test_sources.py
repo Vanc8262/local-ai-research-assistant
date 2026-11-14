@@ -46,7 +46,7 @@ def upstream(seen: list):
         if host == "huggingface.co":
             return httpx.Response(200, json=[{"paper": {"id": "2305.14314", "title": "QLoRA", "summary": "s"}}])
         if host == "127.0.0.1" and request.url.port == 8888:
-            return httpx.Response(200, json={"results": [{"title": "S", "url": "https://s.example/x", "content": "c"}]})
+            return httpx.Response(200, json={"results": [{"title": "QLoRA notes", "url": "https://s.example/x", "content": "c"}]})
         return httpx.Response(404)
     return httpx.MockTransport(handler)
 
@@ -149,3 +149,16 @@ def test_kiwix_drops_words_until_it_finds_pages():
         hits = kiwix(client, "http://127.0.0.1:8090", ["wikipedia_en_all_nopic_2026-06"],
                      "What do the GGUF quantization types Q4_K_M mean?", 3)
     assert patterns == ["GGUF Q4_K_M quantization", "GGUF Q4_K_M", "GGUF"] and len(hits) == 2
+
+
+def test_on_topic_drops_pages_without_the_question_names():
+    from assistant.sources import on_topic
+    hits = [{"title": "Somali architecture", "content": "pillars and arches"},
+            {"title": "AWS Well-Architected", "content": "six pillars"},
+            {"title": "Retrieval-augmented generation", "content": "RAG combines retrieval"}]
+    q = "What are the pillars of the AWS Well-Architected Framework?"
+    assert [h["title"] for h in on_topic(q, hits)] == ["AWS Well-Architected"]
+    rag = on_topic("How does Self-RAG differ from standard retrieval-augmented generation?", hits)
+    assert [h["title"] for h in rag] == ["Retrieval-augmented generation"]
+    # no names in the query: nothing is dropped
+    assert on_topic("What are the main new features in the latest stable Python release?", hits) == hits

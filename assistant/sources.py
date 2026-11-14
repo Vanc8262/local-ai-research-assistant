@@ -341,8 +341,21 @@ class Router:
                                     "s": round(time.perf_counter() - started, 2)}
             with ThreadPoolExecutor(max_workers=len(jobs)) as pool:
                 answers = list(pool.map(run, jobs))
-        merged = merge([hits for _, hits, _ in answers], k, self.per_source)
+        merged = merge([on_topic(query, hits) for _, hits, _ in answers], k, self.per_source)
         return merged, [status for _, _, status in answers]
+
+
+def on_topic(query: str, hits: list[dict]) -> list[dict]:
+    """Drop hits that mention none of the query's names (AWS, Q4_K_M, Self-RAG, ...) in their
+    title or snippet, so a keyword search that fell back to common words ("pillars") can't
+    fill the slots with unrelated pages. Queries without names keep every hit."""
+    names = [w.lower() for w in keywords(query, 6) if _technical(w)]
+    if not names:
+        return hits
+    parts = {p for name in names for p in re.split(r"[-.]", name) if len(p) >= 3}
+    pattern = re.compile(r"(?<![a-z0-9])(?:" + "|".join(map(re.escape, sorted(set(names) | parts, key=len, reverse=True)))
+                         + r")(?![a-z0-9])")
+    return [h for h in hits if pattern.search(f"{h.get('title', '')} {h.get('content', '')}".lower())]
 
 
 def merge(lists: list[list[dict]], k: int, per_source: int = 2, rrf: int = 60) -> list[dict]:
