@@ -6,7 +6,7 @@ import json
 import re
 
 from assistant.client import assistant_message
-from .base import Ctx, SuiteResult, speed_metrics
+from .base import Ctx, SuiteResult
 from .tool_cases import CASES, MISSING, Case, Expect
 from .tool_world import TOOLS, World, validate_args
 

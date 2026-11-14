@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 
 import httpx
 
@@ -83,16 +83,6 @@ class ChatResult:
         if self.reasoning and (self.finish_reason == "length" or self.no_answer):
             record["loop_suspected"] = self.loop_suspected
             record["reasoning_tail"] = self.reasoning[-REASONING_TAIL_CHARS:]
-        return record
-
-    def to_record(self) -> dict:
-        record = self.timing()
-        record.update(
-            content=self.content,
-            reasoning=self.reasoning,
-            tool_calls=[asdict(call) for call in self.tool_calls],
-            error=self.error,
-        )
         return record
 
 

@@ -1,5 +1,3 @@
-import json
-
 import httpx
 
 from assistant.config import load_settings

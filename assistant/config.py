@@ -96,7 +96,8 @@ class SearchSettings:
 @dataclass
 class Settings:
     default_tier: str = "local"
-    backup_tier: str = ""
+    backup_tier: str = ""                # a label only: `tiers` marks it, and you pick it with -t.
+                                         # Nothing falls back to it; the proxy falls back to default_tier.
     runs_dir: Path = Path("runs")
     searxng_url: str = "http://127.0.0.1:8888"
     proxy_port: int = 8765

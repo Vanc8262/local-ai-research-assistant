@@ -1,7 +1,5 @@
 import json
 
-import pytest
-
 from bench.suites import research, vision
 
 SETS = json.loads(research.DATA.read_text(encoding="utf-8"))
