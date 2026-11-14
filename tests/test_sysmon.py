@@ -6,8 +6,8 @@ import pytest
 
 import bench.__main__ as cli
 import fake_model
-from bench import sysmon
-from bench.client import ChatClient
+from assistant import sysmon
+from assistant.client import ChatClient
 
 
 def broken_swap():

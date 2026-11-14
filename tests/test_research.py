@@ -30,7 +30,7 @@ json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], 
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
     return settings
@@ -56,7 +56,7 @@ def test_research_runs_ldr_through_the_gateway(tmp_path):
                           runner=fake_runner(tmp_path), transport=upstream(seen))
 
     assert result.error is None and result.summary == "Lazy imports are new [1]"
-    assert seen == ["local"]
+    assert seen == ["localhost"]
     report = result.report_path.read_text(encoding="utf-8")
     assert report.startswith("# What is new in Python 3.15?") and "https://docs.python.org/3/whatsnew/3.15.html" in report
     assert json.loads((result.run_dir / "sources.json").read_text())[0]["index"] == "1"
@@ -141,7 +141,7 @@ def search_upstream(seen: list):
     return httpx.MockTransport(handler)
 
 
-def test_tavily_fallback_is_for_public_questions_and_the_key_stays_out_of_ldr(tmp_path, monkeypatch):
+def test_tavily_fallback_is_for_public_questions_and_the_key_stays_out_of_the_ldr_job(tmp_path, monkeypatch):
     import assistant.web_pages
     monkeypatch.setattr(assistant.web_pages, "MIN_GAP_S", 0)
     script = tmp_path / "searching_ldr.py"
@@ -175,3 +175,27 @@ def test_offline_search_needs_kiwix_books(tmp_path):
     settings.search.kiwix_books = []
     with pytest.raises(TierNotReady, match="kiwix_books"):
         run_research(settings, "q", RunLog(settings.runs_dir), search="offline", runner=["never-run"])
+
+
+ENV_LDR = r'''
+import json, os, sys
+job = json.load(sys.stdin)
+keys = sorted(k for k in os.environ if k in ("TAVILY_API_KEY", "TEST_GEMINI_KEY", "GITHUB_TOKEN", "HF_TOKEN",
+                                             "SOME_OTHER_TOKEN", "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST"))
+result = {"summary": "env " + ",".join(keys) + " [1]", "sources": [{"index": "1", "title": "t", "link": "https://x.example/"}]}
+json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], "w"))
+'''
+
+
+def test_ldr_subprocess_gets_no_keys_or_tokens(tmp_path, monkeypatch):
+    """LDR is third-party code; it gets no cloud key in its environment, private or public."""
+    script = tmp_path / "env_ldr.py"
+    script.write_text(ENV_LDR, encoding="utf-8")
+    for name in ("TAVILY_API_KEY", "TEST_GEMINI_KEY", "GITHUB_TOKEN", "HF_TOKEN", "SOME_OTHER_TOKEN"):
+        monkeypatch.setenv(name, "secret")
+    settings = settings_for(tmp_path)
+    settings.research.web_pages = 0
+    for public in (False, True):
+        result = run_research(settings, "q", RunLog(settings.runs_dir), public=public,
+                              runner=[sys.executable, str(script)])
+        assert result.summary == "env LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST [1]", result.error

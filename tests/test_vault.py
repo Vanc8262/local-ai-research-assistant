@@ -171,7 +171,7 @@ runs_dir = "{(tmp_path / 'runs').as_posix()}"
 vault_dir = "{root.as_posix()}"
 [tiers.local]
 kind = "local"
-base_url = "http://local/v1"
+base_url = "http://localhost/v1"
 model = "m"
 ''', encoding="utf-8")
     good, bad = tmp_path / "good.gguf", tmp_path / "bad.gguf"
@@ -261,6 +261,8 @@ def test_import_pick_needs_path_and_license(tmp_path):
         vault.load_picks(write_picks(tmp_path, PICKS + PICKS))
 
 
-def test_shipped_vault_toml_has_no_picks_yet():
+def test_shipped_vault_toml_is_valid():
+    """Only Van picks models for vault.toml; this checks the file is well formed, whatever it holds."""
     from pathlib import Path
-    assert vault.load_picks(Path(__file__).resolve().parent.parent / "vault.toml") == []
+    picks = vault.load_picks(Path(__file__).resolve().parent.parent / "vault.toml")
+    assert isinstance(picks, list)

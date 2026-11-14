@@ -3,7 +3,7 @@ import json
 import httpx
 
 import fake_model
-from bench.client import ChatClient, assistant_message
+from assistant.client import ChatClient, assistant_message
 
 
 def client_for(handler):
@@ -121,7 +121,7 @@ def test_models_fall_back_to_openai_list():
 
 
 def test_cut_off_reply_keeps_reasoning_tail_and_flags_a_loop():
-    from bench.client import REASONING_TAIL_CHARS, ChatResult
+    from assistant.client import REASONING_TAIL_CHARS, ChatResult
     looping = ChatResult(reasoning="Let me check the edge case again. " * 200, finish_reason="length")
     record = looping.timing()
     assert record["loop_suspected"] is True
@@ -136,3 +136,24 @@ def test_cut_off_reply_keeps_reasoning_tail_and_flags_a_loop():
 
     empty = ChatResult(reasoning="The answer is 20 percent.", finish_reason="stop")
     assert empty.timing()["reasoning_tail"] == "The answer is 20 percent."
+
+
+def test_bench_config_refuses_a_key_in_the_file(tmp_path, monkeypatch):
+    import pytest
+    from bench.config import load_config
+    monkeypatch.delenv("BENCH_API_KEY", raising=False)
+    path = tmp_path / "bench.toml"
+    path.write_text('[server]\nbase_url = "http://127.0.0.1:1234/v1"\napi_key = "sk-oops"\n', encoding="utf-8")
+    with pytest.raises(ValueError, match="BENCH_API_KEY"):
+        load_config(path)
+    path.write_text('[server]\nbase_url = "http://127.0.0.1:1234/v1"\n', encoding="utf-8")
+    monkeypatch.setenv("BENCH_API_KEY", "from-env")
+    assert load_config(path).api_key == "from-env"
+
+
+def test_shipped_bench_toml_loads_and_holds_no_key(monkeypatch):
+    from pathlib import Path
+    from bench.config import load_config
+    monkeypatch.delenv("BENCH_BASE_URL", raising=False)
+    shipped = Path(__file__).resolve().parent.parent / "bench.toml"
+    assert load_config(shipped).base_url.startswith("http://127.0.0.1")   # load_config refuses a key in it

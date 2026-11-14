@@ -13,12 +13,14 @@ import datetime as dt
 import platform
 import sys
 
-from . import __version__, sysmon
-from .client import ChatClient
+from assistant import sysmon
+from assistant.client import ChatClient
+
+from . import __version__
 from .config import Config, ModelCfg, load_config
 from .report import write_report
 from .results import RunWriter, slug
-from .suites import SUITES
+from .suites import DEFAULT_SUITES, SUITES
 from .suites.base import Ctx, speed_metrics
 
 
@@ -133,7 +135,9 @@ def main(argv: list[str] | None = None) -> int:
 
     run = sub.add_parser("run", help="run suites against one model")
     run.add_argument("--model", required=True, help="model id as shown by `python -m bench models`")
-    run.add_argument("--suites", default=",".join(SUITES), help=f"comma-separated: {', '.join(SUITES)}")
+    run.add_argument("--suites", default=",".join(DEFAULT_SUITES),
+                     help=f"comma-separated: {', '.join(SUITES)} (default: all but code, which runs "
+                          "model-written code on this PC without a sandbox)")
     run.add_argument("--tag", default="", help="short label for this run, e.g. ctx16k or q5")
     run.add_argument("--limit", type=int, default=None, help="run only the first N items of each suite")
     run.add_argument("--context", type=int, default=None,

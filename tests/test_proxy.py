@@ -10,12 +10,12 @@ from assistant.config import Settings, Tier
 from assistant.gateway import Gateway
 from assistant.proxy import Proxy, make_server
 from assistant.runlog import RunLog, read_run
-from bench.client import ChatClient
+from assistant.client import ChatClient
 
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path, default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
     return settings
@@ -63,7 +63,7 @@ def test_plain_request_goes_through_the_gateway(tmp_path):
     body = resp.json()
     assert body["choices"][0]["message"]["content"] == "ready"
     assert body["usage"]["completion_tokens"] == 40
-    assert [r.url.host for r in seen] == ["local"]
+    assert [r.url.host for r in seen] == ["localhost"]
     (step,) = steps(log)
     assert step["tier"] == "local" and step["purpose"] == "proxy" and step["outcome"] == "ok"
 
@@ -132,7 +132,7 @@ def test_writer_temperature_applies_to_local_tiers_only(tmp_path, monkeypatch):
 
     monkeypatch.setenv("TEST_WRITER_KEY", "k")
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma", temperature=1.0)
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma", temperature=1.0)
     settings.tiers["cloud"] = Tier(name="cloud", kind="cloud", base_url="http://cloud/v1", model="flash",
                                    api_key_env="TEST_WRITER_KEY", temperature=1.0)
     gateway = Gateway(settings, RunLog(settings.runs_dir), transport=httpx.MockTransport(handler))
@@ -141,3 +141,18 @@ def test_writer_temperature_applies_to_local_tiers_only(tmp_path, monkeypatch):
     proxy.complete({"model": "cloud", "messages": [{"role": "user", "content": "hi"}]})
     gateway.close()
     assert [b["temperature"] for b in bodies] == [0.3, 1.0]
+
+
+def test_a_fallback_tier_that_is_not_ready_returns_503(tmp_path, monkeypatch):
+    """The fallback call used to be unwrapped, so TierNotReady dropped the connection."""
+    from assistant.proxy import ProxyError
+    monkeypatch.delenv("TEST_GEMINI_KEY", raising=False)
+    monkeypatch.delenv("TEST_LOCAL_KEY", raising=False)
+    settings = settings_for(tmp_path)
+    settings.tiers["local"].api_key_env = "TEST_LOCAL_KEY"   # a llama-server started with --api-key
+    gateway = Gateway(settings, RunLog(tmp_path), transport=upstream([]))
+    proxy = Proxy(settings, gateway, private=False)
+    with pytest.raises(ProxyError) as caught:
+        proxy.complete({"model": "gemini", "messages": [{"role": "user", "content": "hi"}]})
+    assert caught.value.status == 503 and caught.value.kind == "tier_not_ready"
+    gateway.close()

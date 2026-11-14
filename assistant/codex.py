@@ -30,7 +30,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from .config import Settings
+from .config import LOOPBACK, Settings
 from .runlog import RunLog
 
 TOPICS = ("python", "software-engineering", "cloud", "ml", "ai-llm", "llm-agents", "rag",
@@ -44,7 +44,6 @@ GITHUB_BLOB_RE = re.compile(r"^https://github\.com/([^/]+)/([^/]+)/blob/(.+)$")
 MANIFEST_FIELDS = ("id", "topic", "title", "authors", "year", "url", "licence", "file", "bytes",
                    "sha256", "downloaded_at")
 INDEXER = Path(__file__).with_name("codex_index.py")
-LOOPBACK = ("127.0.0.1", "localhost", "::1")
 USER_AGENT = "local-ai-research-assistant/0.1 (personal research library; one request at a time)"
 MAX_BYTES = 200 * 2**20   # no single book or paper in the catalog comes near this
 BROWSERS = (r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",

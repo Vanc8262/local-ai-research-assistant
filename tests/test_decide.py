@@ -15,7 +15,7 @@ from assistant.runlog import RunLog, read_run
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1", model="g",
                                     api_key_env="PATH")
     return settings

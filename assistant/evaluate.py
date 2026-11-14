@@ -29,7 +29,7 @@ from pathlib import Path
 
 import httpx
 
-from bench.sysmon import Timeline
+from .sysmon import Timeline
 
 from .config import Settings
 from .decide import Decider
@@ -63,6 +63,7 @@ class Question:
     topic: str = ""
     expect: list[list[str]] = None
     codex: bool = False     # the codex holds primary sources for it, so it also runs in codex mode
+    public: bool = False    # holds nothing private: may run in hybrid mode and use the Tavily fallback
 
     def facts_found(self, report: str) -> float | None:
         if not self.expect:
@@ -120,6 +121,8 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
                 for mode in modes:
                     if mode == "codex" and not question.codex:
                         continue
+                    if MODES[mode][2] and not question.public:
+                        continue   # a private question never runs on a cloud mode
                     ram.label = f"{question.id} {mode} run {run}"
                     ram.reset_low()
                     row = _one(settings, question, mode, verify_tier, runner, transport,
@@ -138,10 +141,10 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
     label, started = ram.label, time.perf_counter()
     ram.label = f"{label}: research"
     try:
-        # Eval questions are public, so local mode may use the Tavily fallback when SearXNG
-        # returns nothing. The model still runs locally; tavily_sources records the use.
-        result = run_research(settings, question.text, log, tier=tier, search=search, public=public,
-                              runner=runner, transport=transport, public_search=True)
+        # A public question's local mode may use the Tavily fallback when SearXNG returns
+        # nothing. The model still runs locally; tavily_sources records the use.
+        result = run_research(settings, question.text, log, tier=tier, search=search, public=public and question.public,
+                              runner=runner, transport=transport, public_search=question.public)
     except Exception as exc:   # a blocked or unready mode is a result too; keep going
         return {**row, "outcome": "not_run", "error": f"{type(exc).__name__}: {exc}"}
     row["research_s"] = round(time.perf_counter() - started, 1)

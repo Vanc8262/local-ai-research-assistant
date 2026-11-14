@@ -22,10 +22,10 @@ from urllib.parse import urlparse
 
 import httpx
 
-from assistant.verify import best_passages, html_to_text
+from assistant.config import LOOPBACK
+from assistant.text import best_passages, html_to_text
 
 USER_AGENT = "Mozilla/5.0 (compatible; research-assistant/0.1)"
-LOOPBACK = ("127.0.0.1", "localhost", "::1")
 MAX_PAGE_BYTES = 2 * 2**20
 # Engines that scrape no search engine, so they answer when Brave, Google and DuckDuckGo
 # have suspended the instance. Weaker on plain-language questions; best for papers.

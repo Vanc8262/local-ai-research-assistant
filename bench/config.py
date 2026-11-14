@@ -24,7 +24,7 @@ class ModelCfg:
 
 @dataclass
 class Config:
-    base_url: str = "http://localhost:1234/v1"
+    base_url: str = "http://127.0.0.1:1234/v1"   # not localhost: ~2.3 s IPv6 fallback per request on Windows
     api_key: str = "lm-studio"
     timeout_s: float = 900.0
     temperature: float = 0.0
@@ -48,7 +48,9 @@ def load_config(path: str | Path = "bench.toml") -> Config:
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
         server = raw.get("server", {})
         defaults = raw.get("defaults", {})
-        for key in ("base_url", "api_key", "timeout_s"):
+        if "api_key" in server:   # keys come from environment variables, never from a file in the repo
+            raise ValueError(f"{path}: remove api_key from [server]; set BENCH_API_KEY if the server needs one")
+        for key in ("base_url", "timeout_s"):
             if key in server:
                 setattr(cfg, key, server[key])
         for key in ("temperature", "max_tokens", "seed", "speed_repeats",

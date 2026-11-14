@@ -43,7 +43,7 @@ Everyone will use this technique for every model by next year, without any doubt
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     return settings
 
 
@@ -73,7 +73,7 @@ def judge(prompt: str) -> dict:
 
 def transport(prompts: list, fail: bool = False):
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             if fail:
                 return httpx.Response(500, text="model crashed")
             prompt = json.loads(request.content)["messages"][0]["content"]
@@ -168,7 +168,7 @@ def test_a_model_failure_reloads_and_tries_once_more(tmp_path):
     working = transport(prompts)
 
     def handler(request):
-        if request.url.host == "local" and failures:
+        if request.url.host == "localhost" and failures:
             failures.pop()
             return httpx.Response(500, text="out of memory")
         return working.handler(request)
@@ -204,7 +204,7 @@ def repair_one(tmp_path, sentence: str, answers: dict):
     run_dir = make_run(tmp_path, report)
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             kind = "rewrite" if "failed a citation check" in prompt else "check"
             source = "two" if "(Paging)" in prompt else "one"

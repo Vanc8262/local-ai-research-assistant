@@ -13,7 +13,7 @@
     python -m assistant research "question"                 a cited report from Local Deep Research
     python -m assistant research --public -t gemini --search tavily "question"
     python -m assistant verify <run_id>                     check a report's citations against its sources
-python -m assistant repair <run_id>                     fix or remove the claims that failed the check
+    python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
     python -m assistant decide probe [-t local]             which decision method works on a local tier
@@ -45,7 +45,7 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
-from .verify import verify_run
+from .verify import CAVEAT, failures, verify_run
 from . import vault
 
 
@@ -226,10 +226,18 @@ def cmd_research(settings, args) -> int:
     return 0 if result.summary and not result.error else 1
 
 
-def cmd_verify(settings, args) -> int:
-    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
+def _report_dir(settings, run: str) -> Path | None:
+    """A research run folder, from its id or path; None (with a message) when it has no report."""
+    run_dir = Path(run) if Path(run).is_dir() else settings.runs_dir / run
     if not (run_dir / "report.md").exists():
         print(f"no report.md in {run_dir}")
+        return None
+    return run_dir
+
+
+def cmd_verify(settings, args) -> int:
+    run_dir = _report_dir(settings, args.run)
+    if run_dir is None:
         return 1
     log = RunLog(settings.runs_dir, task=f"verify: {run_dir.name}")
     return _verify(settings, run_dir, log, tier=args.tier, private=not args.public,
@@ -247,15 +255,13 @@ def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload
             decider.close()
         gateway.close()
     print((run_dir / "verification.md").read_text(encoding="utf-8"))
-    summary = result.summary()
     print(f"Saved: {run_dir / 'verification.json'}")
-    return 0 if not (summary["uncited"] or summary["unsupported"] or summary["dangling_citations"]) else 1
+    return _exit_code(result.summary())
 
 
 def cmd_repair(settings, args) -> int:
-    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
-    if not (run_dir / "report.md").exists():
-        print(f"no report.md in {run_dir}")
+    run_dir = _report_dir(settings, args.run)
+    if run_dir is None:
         return 1
     log = RunLog(settings.runs_dir, task=f"repair: {run_dir.name}")
     return _repair(settings, run_dir, log, tier=args.tier, reload_every=args.reload_every)
@@ -275,8 +281,14 @@ def _repair(settings, run_dir: Path, log: RunLog, *, tier, reload_every: int = 0
         gateway.close()
     print((run_dir / "repair.md").read_text(encoding="utf-8"))
     print(f"Saved: {run_dir / 'report.md'} (original: report.original.md)")
-    return 0 if not (result.after["uncited"] or result.after["unsupported"] or result.after["partial"]
-                     or result.after["dangling_citations"]) else 1
+    return _exit_code(result.after)
+
+
+def _exit_code(summary: dict) -> int:
+    """0 only when the citation check passes, which shows the checker accepts the report."""
+    reasons = failures(summary)
+    print(f"Citation check: {'FAIL (' + ', '.join(reasons) + ')' if reasons else 'pass'}. {CAVEAT}")
+    return 1 if reasons else 0
 
 
 def cmd_eval(settings, args) -> int:

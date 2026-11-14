@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from bench.client import ChatResult, ToolCall
+from assistant.client import ChatResult, ToolCall
 from bench.suites.tool_calling import check_case, run_case
 from bench.suites.tool_cases import CASES
 from bench.suites.tool_world import TOOLS, World, safe_eval, validate_args

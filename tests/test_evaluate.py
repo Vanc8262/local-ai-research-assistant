@@ -29,7 +29,7 @@ json.dump({"result": result, "error": None, "elapsed_s": 1.0}, open(job["out"], 
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     settings.tiers["gemini"] = Tier(name="gemini", kind="cloud", base_url="http://cloud/v1",
                                     model="gemini-2.5-flash", api_key_env="TEST_GEMINI_KEY")
     return settings
@@ -46,9 +46,9 @@ def decider_reply(request, p_true: float = 0.95):
 
 def transport(seen: list):
     def handler(request):
-        if request.url.host == "local" and json.loads(request.content).get("logprobs"):
+        if request.url.host == "localhost" and json.loads(request.content).get("logprobs"):
             return decider_reply(request)
-        if request.url.host in ("local", "cloud"):
+        if request.url.host in ("localhost", "cloud"):
             seen.append(request.url.host)
             prompt = json.loads(request.content)["messages"][0]["content"]
             answer = (json.dumps({"verdict": "supported", "quote": "Python 3.15 adds lazy imports."})
@@ -64,7 +64,7 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
     script = tmp_path / "fake_ldr.py"
     script.write_text(FAKE_LDR, encoding="utf-8")
     seen = []
-    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"]])
+    question = Question(id="py", text="What is new in Python 3.15?", expect=[["3.15"], ["lazy import"]], public=True)
     out_dir, rows = run_eval(settings_for(tmp_path), [question], ["local", "hybrid"],
                              runner=[sys.executable, str(script)], transport=transport(seen), runs=1)
 
@@ -72,7 +72,7 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
         ("local", "ok", 1.0, 1.0, "pass"), ("hybrid", "ok", 1.0, 1.0, "pass")]
     assert rows[0]["facts"] == 1.0
     # research went to the mode's tier; the citation check always ran locally
-    assert seen == ["local", "local", "cloud", "local"]
+    assert seen == ["localhost", "localhost", "cloud", "localhost"]
     assert rows[0]["local_tokens"] > 0 and rows[0]["cloud_tokens"] == 0
     assert rows[1]["cloud_tokens"] > 0 and rows[1]["local_tokens"] == 0
     with (out_dir / "summary.csv").open(encoding="utf-8") as handle:
@@ -83,14 +83,32 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
 
 def test_a_mode_that_cannot_run_is_recorded_not_fatal(tmp_path, monkeypatch):
     monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-    question = Question(id="q", text="q")
+    question = Question(id="q", text="q", public=True)
     _, rows = run_eval(settings_for(tmp_path), [question], ["hybrid"], runner=["never-run"], transport=transport([]))
     assert rows[0]["outcome"] == "not_run" and "TAVILY_API_KEY" in rows[0]["error"]
+
+
+def test_a_private_question_never_runs_hybrid_or_reaches_tavily(tmp_path, monkeypatch):
+    """A question without public = true counts as private: no Gemini, no Tavily fallback."""
+    from assistant import evaluate
+    monkeypatch.setenv("TEST_GEMINI_KEY", "gemini-test-key")
+    monkeypatch.setenv("TAVILY_API_KEY", "tvly-test-key")
+    calls = []
+    def fake_research(settings, text, log, **options):
+        calls.append(options)
+        raise RuntimeError("stop here")
+    monkeypatch.setattr(evaluate, "run_research", fake_research)
+    question = Question(id="secret", text="q")
+    _, rows = run_eval(settings_for(tmp_path), [question], ["local", "hybrid"], runner=["never-run"],
+                       transport=transport([]), runs=1)
+    assert [r["mode"] for r in rows] == ["local"]
+    assert [(c["public"], c["public_search"]) for c in calls] == [(False, False)]
 
 
 def test_shipped_questions_load():
     questions = load_questions(ROOT / "evals" / "research_questions.toml")
     assert len(questions) == 5 and all(q.expect for q in questions)
+    assert all(q.public for q in questions)   # all five are public; hybrid mode needs that
 
 
 def test_model_is_reloaded_before_each_question(tmp_path, monkeypatch):
@@ -141,9 +159,9 @@ FLAGGED_LDR = FAKE_LDR.replace('"Python 3.15 adds lazy imports [1]."',
 
 def flagged_transport():
     def handler(request):
-        if request.url.host == "local" and json.loads(request.content).get("logprobs"):
+        if request.url.host == "localhost" and json.loads(request.content).get("logprobs"):
             return decider_reply(request)
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             if "failed a citation check" in prompt:
                 answer = {"action": "remove", "sentence": ""}

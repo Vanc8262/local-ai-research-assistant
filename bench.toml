@@ -5,7 +5,7 @@
 # 127.0.0.1, not localhost: on Windows "localhost" tries IPv6 first and every
 # request waited about 2.3 s before falling back, which inflated time to first token.
 base_url = "http://127.0.0.1:1234/v1"   # llama-server's OpenAI-compatible API
-api_key = "local"                       # any text; llama-server runs without a key
+# No api_key here: llama-server runs without one. A server that needs a key reads it from BENCH_API_KEY.
 timeout_s = 900
 
 [defaults]
@@ -16,6 +16,8 @@ speed_repeats = 3
 code_attempts = 2     # 1 = single shot; 2 = one retry with the test output
 context_length = 8192 # what you loaded the model with; recorded and checked
 
+# The sampling settings of a model in both assistant.toml and bench.toml must match;
+# tests/test_assistant.py checks it.
 # Sampling follows each maker's recommendation for reasoning mode. At temperature 0
 # both models often reasoned until they hit max_tokens (a loop is suspected; the next
 # run records reasoning_tail and loop_suspected to confirm).

@@ -1,12 +1,15 @@
 """Code-editing suite: the model gets a small file, its tests and a task, and
 returns the whole updated file. The harness runs the tests to score it.
 
-Model-written code is executed, so each attempt runs in a throwaway directory
-in a separate process with a time limit.
+Model-written code is executed on this PC. This is NOT a sandbox: each attempt runs
+in a throwaway directory, in a separate process with a time limit and an environment
+stripped of keys and tokens, but it can still read and write files and use the network.
+The suite is left out of a default `bench run`; ask for it with `--suites code`.
 """
 from __future__ import annotations
 
 import ast
+import os
 import re
 import shutil
 import subprocess
@@ -77,6 +80,18 @@ def extract_code(reply: str) -> tuple[str | None, bool]:
     return None, False
 
 
+# All the test process gets from this one's environment: enough for Python and pytest to
+# start on Windows and Linux, and no API keys or tokens.
+TEST_ENV_NAMES = ("PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC",
+                  "TEMP", "TMP", "TMPDIR", "HOME", "USERPROFILE", "LANG", "LC_ALL")
+
+
+def child_env(environ=None) -> dict:
+    environ = os.environ if environ is None else environ
+    env = {name: environ[name] for name in TEST_ENV_NAMES if name in environ}
+    return {**env, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
 def run_tests(task: Task, code: str) -> tuple[bool, str]:
     """Run the task's tests against `code` in a temporary directory."""
     workdir = Path(tempfile.mkdtemp(prefix="bench_code_"))
@@ -88,7 +103,7 @@ def run_tests(task: Task, code: str) -> tuple[bool, str]:
                 [sys.executable, "-m", "pytest", "-q", "-x", "--no-header", "-p", "no:cacheprovider",
                  task.test_name],
                 cwd=workdir, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                timeout=TEST_TIMEOUT_S,
+                timeout=TEST_TIMEOUT_S, env=child_env(),
             )
         except subprocess.TimeoutExpired:
             return False, f"tests did not finish within {TEST_TIMEOUT_S} seconds"

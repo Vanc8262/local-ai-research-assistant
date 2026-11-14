@@ -38,6 +38,20 @@ WRITER_RULES = ("End every sentence with the number of the source that states it
 RUNNER = Path(__file__).with_name("ldr_runner.py")
 SEARCH_TOOLS = ("searxng", "offline", "tavily", "codex")   # offline: Kiwix copies only, nothing leaves the PC
 CLOUD_SEARCH = {"tavily": "TAVILY_API_KEY"}
+# Keys the assistant reads, which LDR (third-party code) never needs: its model calls go
+# through the gateway proxy, and a public run hands it the Tavily key in the job itself.
+KNOWN_SECRETS = ("TAVILY_API_KEY", "HF_TOKEN", "GITHUB_TOKEN", "OPENALEX_API_KEY", "STACKEXCHANGE_KEY",
+                 "GEMINI_API_KEY", "BENCH_API_KEY")
+SECRET_SUFFIXES = ("_KEY", "_TOKEN", "_SECRET", "_PASSWORD")
+
+
+def ldr_env(settings: Settings, environ=None) -> dict:
+    """The environment for the LDR subprocess: this one, minus every key and token. Names
+    LDR itself reads (LDR_*) stay."""
+    environ = os.environ if environ is None else environ
+    secrets = set(KNOWN_SECRETS) | {t.api_key_env for t in settings.tiers.values() if t.api_key_env}
+    return {name: value for name, value in environ.items()
+            if name.startswith("LDR_") or not (name.upper() in secrets or name.upper().endswith(SECRET_SUFFIXES))}
 
 
 @dataclass
@@ -157,7 +171,7 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
     if page_search:   # see web_pages.py: page passages instead of SearXNG's 160-character snippets
         job["pages"] = {"search_url": f"{proxy_url}/search", "min_sources": settings.research.web_min_sources}
         job["overrides"]["search.tool"] = "pages"
-    env = {**os.environ, "PYTHONIOENCODING": "utf-8",
+    env = {**ldr_env(settings), "PYTHONIOENCODING": "utf-8",
            # LDR refuses loopback URLs unless allowed; allow exactly our SearXNG and proxy.
            "LDR_SEARCH_PRIVATE_ENGINE_URL_ALLOWLIST": f"{settings.searxng_url},{proxy_url}"}
     command = runner or [str(settings.research.ldr_python), str(RUNNER)]

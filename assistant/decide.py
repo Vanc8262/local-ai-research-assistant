@@ -32,7 +32,7 @@ import math
 import re
 import string
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 
 import httpx
 
@@ -193,12 +193,6 @@ class Decider:
         self.http.close()
 
     # -- public ---------------------------------------------------------------
-
-    def decide(self, state: str, questions: dict[str, Question], *, purpose: str = "decide",
-               tier: str | None = None) -> dict[str, Decision]:
-        """Answer each question about the same state. Questions are asked separately, so
-        one cannot sway another; the shared state comes first so LM Studio can reuse it."""
-        return {name: self.ask(state, q, purpose=f"{purpose}:{name}", tier=tier) for name, q in questions.items()}
 
     def ask(self, state: str, question: Question, *, purpose: str = "decide", tier: str | None = None) -> Decision:
         tier_obj = self._local_tier(tier or self.tier_name, purpose)

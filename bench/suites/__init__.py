@@ -9,3 +9,5 @@ SUITES = {
     "vision": vision.run,
     "headroom": headroom.run,
 }
+# `code` runs model-written code on this PC without a sandbox, so it runs only when asked for.
+DEFAULT_SUITES = [name for name in SUITES if name != "code"]

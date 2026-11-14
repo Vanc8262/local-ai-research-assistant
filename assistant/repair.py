@@ -30,13 +30,12 @@ import shutil
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-import httpx
-
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .runlog import RunLog
-from .verify import (BOLD_HEADING_RE, CITATION_RE, NUMBERED_RE, Claim, Verification, _check, _is_lead_in,
-                     _check_key, _json_object, _ReloadingGateway, _source_text, _squash, best_passages, keywords,
-                     known_checks, verify_run)
+from .text import best_passages, keywords
+from .verify import (BOLD_HEADING_RE, CITATION_RE, NUMBERED_RE, Claim, ReloadingGateway, Verification,
+                     check_citation, check_key, citation_client, is_lead_in, json_object, known_checks,
+                     source_text, squash, verify_run)
 
 ORIGINALS = ("report.md", "verification.json", "verification.md")
 CANDIDATE_SOURCES = 2     # sources tried for an uncited claim, the ones sharing most words with it
@@ -95,7 +94,10 @@ class _CheckedGateway:
         try:
             answer = self.gateway.ask(*args, **kwargs)
             if answer.error and self.reloader:
-                self.reloader()
+                try:
+                    self.reloader()
+                except Exception as exc:   # e.g. the model server is down too; put the report back
+                    raise RepairError(f"{answer.error}; reloading the model failed: {exc}") from None
                 answer = self.gateway.ask(*args, **kwargs)
         except (PrivacyError, TierNotReady) as exc:
             raise RepairError(str(exc)) from None
@@ -112,15 +114,14 @@ def repair_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
     for name in ORIGINALS:
         if (run_dir / name).exists() and not _original(run_dir, name).exists():
             shutil.copyfile(run_dir / name, _original(run_dir, name))
-    model = _ReloadingGateway(_CheckedGateway(gateway, reloader), reload_every, reloader)
+    model = ReloadingGateway(_CheckedGateway(gateway, reloader), reload_every, reloader)
     judged: dict = {}   # verdicts given while looking for a better source, so they are not asked twice
     check = lambda: verify_run(run_dir, model, log, tier=tier, private=private, transport=transport,
                                known={**known_checks(run_dir), **judged}, decider=decider)
     try:
         checked = check()
         before = checked.summary()
-        client = httpx.Client(follow_redirects=True, timeout=30.0, transport=transport,
-                              headers={"User-Agent": "local-ai-research-assistant/0.1 (citation check)"})
+        client = citation_client(transport)
         try:
             report, changes = _first_pass(report_path.read_text(encoding="utf-8"), checked, run_dir, client,
                                           model, tier, private, judged, decider)
@@ -178,9 +179,9 @@ def _first_pass(report: str, checked: Verification, run_dir: Path, client, model
 def _fix(claim: Claim, sources: dict, run_dir: Path, client, model, tier: str, private: bool,
          judged: dict, decider=None) -> Change:
     for index in _likely_sources(claim.text, sources, client, run_dir, skip=claim.citations):
-        check = _check(claim, index, sources, client, run_dir, model, tier, private, decider)
+        check = check_citation(claim, index, sources, client, run_dir, model, tier, private, decider)
         if _quote_backs(check.quote, claim.text):
-            judged[_check_key(claim.text, index)] = check
+            judged[check_key(claim.text, index)] = check
         if check.verdict == "supported" and _quote_backs(check.quote, claim.text):
             return Change("cited", claim.text, _with_citations(_without_citations(claim.raw), [index]), check.reason)
     if not claim.citations:
@@ -197,7 +198,7 @@ def _likely_sources(text: str, sources: dict, client, run_dir: Path, skip: list[
     for index, source in sources.items():
         if index in skip:
             continue
-        body = _source_text(source, index, client, run_dir)[2].lower()
+        body = source_text(source, index, client, run_dir)[2].lower()
         scores[index] = sum(word in body for word in words)
     ranked = sorted((index for index, score in scores.items() if score), key=scores.get, reverse=True)
     return ranked[:CANDIDATE_SOURCES]
@@ -213,7 +214,7 @@ def _rewrite(claim: Claim, reasons: str, sources: dict, run_dir: Path, client, m
     blocks = []
     for index in claim.citations:
         if index in sources:
-            page, snippet, _ = _source_text(sources[index], index, client, run_dir)
+            page, snippet, _ = source_text(sources[index], index, client, run_dir)
             parts = (best_passages(claim.text, page)[:2] if page else []) + ([snippet] if snippet else [])
             blocks += [f"[{index}] {part}" for part in parts]
     if not blocks:
@@ -221,9 +222,9 @@ def _rewrite(claim: Claim, reasons: str, sources: dict, run_dir: Path, client, m
     prompt = REWRITE_PROMPT.format(claim=claim.text, reasons=reasons, passages="\n---\n".join(blocks))
     answer = model.ask(tier, [{"role": "user", "content": prompt}], purpose="repair", private=private,
                        max_tokens=1000, temperature=TEMPERATURE)
-    data = _json_object(answer.content)
+    data = json_object(answer.content)
     sentence = " ".join(CITATION_RE.sub("", str(data.get("sentence") or "")).split())
-    if data.get("action") != "rewrite" or len(sentence) < MIN_REWRITE_CHARS or _squash(sentence) == _squash(claim.text):
+    if data.get("action") != "rewrite" or len(sentence) < MIN_REWRITE_CHARS or squash(sentence) == squash(claim.text):
         return ""
     return sentence if _only_deletes(sentence, claim.text) else ""
 
@@ -239,12 +240,12 @@ def _only_deletes(sentence: str, original: str) -> bool:
 def _remove_failures(report: str, checked: Verification, changes: list[Change]) -> str:
     """The second pass: what still fails goes. A rewrite that failed counts as a removal of
     the sentence the report first had, not as a rewrite."""
-    rewrites = {_squash(CITATION_RE.sub("", c.after)): c for c in changes if c.action == "rewritten"}
+    rewrites = {squash(CITATION_RE.sub("", c.after)): c for c in changes if c.action == "rewritten"}
     for claim in checked.claims:
         if claim.verdict in ("supported", "unchecked") or claim.raw not in report:
             continue
         report = _remove(report, claim.raw)
-        rewrite = rewrites.get(_squash(claim.text))
+        rewrite = rewrites.get(squash(claim.text))
         if rewrite:
             rewrite.action, rewrite.after = "removed", ""
             rewrite.reason = f"its rewrite failed too: {_reasons(claim)}"
@@ -292,7 +293,7 @@ def _is_title(line: str, bare: str) -> bool:
     stripped = line.strip()
     if stripped.startswith("# ") or stripped.startswith(("- ", "* ", "• ")) or NUMBERED_RE.match(stripped):
         return False   # the report's own title stays, and so do list items, even a bare "6. **Sustainability**"
-    return stripped.startswith("#") or bool(BOLD_HEADING_RE.match(bare)) or _is_lead_in(CITATION_RE.sub("", bare).strip())
+    return stripped.startswith("#") or bool(BOLD_HEADING_RE.match(bare)) or is_lead_in(CITATION_RE.sub("", bare).strip())
 
 
 def _level(line: str, bare: str) -> int:

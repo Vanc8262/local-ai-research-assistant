@@ -6,7 +6,8 @@ import fake_model
 from assistant.config import Settings, Tier
 from assistant.gateway import Gateway
 from assistant.runlog import RunLog, read_run
-from assistant.verify import (best_passages, html_to_text, missing_facts, parse_verdict, split_claims,
+from assistant.text import best_passages, html_to_text
+from assistant.verify import (missing_facts, parse_verdict, split_claims,
                               verify_run, quote_in_source, PROMPT, COMBINED_PROMPT)
 
 REPORT = """# What is new in Python 3.15?
@@ -36,14 +37,14 @@ SOURCES = [
 
 def settings_for(tmp_path) -> Settings:
     settings = Settings(runs_dir=tmp_path / "runs", default_tier="local")
-    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://local/v1", model="gemma")
+    settings.tiers["local"] = Tier(name="local", kind="local", base_url="http://localhost/v1", model="gemma")
     return settings
 
 
 def transport(prompts: list):
     """Serves the cited pages, and plays a model that always says "supported" with a quote."""
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             prompts.append(prompt)
             quote = ("the new lazy keyword defers loading a module until first use" if "lazy" in prompt
@@ -113,7 +114,7 @@ def test_a_quote_the_source_does_not_contain_is_not_support(tmp_path):
     settings = settings_for(tmp_path)
 
     def invented(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             answer = json.dumps({"verdict": "supported", "quote": "Lazy imports make startup 50% faster."})
             return httpx.Response(200, content=fake_model.sse({"content": answer}))
         return httpx.Response(200, text=PAGES["/3/whatsnew/3.15.html"], headers={"content-type": "text/html"})
@@ -160,7 +161,7 @@ def test_snippet_is_used_when_the_page_is_boilerplate_and_unparsed_replies_are_r
     prompts = []
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompts.append(json.loads(request.content)["messages"][0]["content"])
             return httpx.Response(200, content=fake_model.sse({"content": next(replies)}))
         return httpx.Response(200, text="<p>YouTube About Press Copyright</p>", headers={"content-type": "text/html"})
@@ -178,7 +179,7 @@ def test_unparsed_reply_is_kept_for_diagnosis(tmp_path):
     (run_dir / "report.md").write_text("Python 3.15 adds lazy imports through a keyword [1].\n", encoding="utf-8")
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             return httpx.Response(200, content=fake_model.sse({"content": "I am not sure."}))
         return httpx.Response(200, text=PAGES["/3/whatsnew/3.15.html"], headers={"content-type": "text/html"})
 
@@ -217,7 +218,7 @@ def test_sources_that_each_cover_part_of_a_list_are_judged_together(tmp_path):
     prompts = []
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             prompt = json.loads(request.content)["messages"][0]["content"]
             prompts.append(prompt)
             if "support it together" in prompt:
@@ -256,7 +257,7 @@ def test_verification_samples_at_temperature_zero(tmp_path):
     settings.tiers["local"].temperature = 1.0   # the tier's writing preset
 
     def handler(request):
-        if request.url.host == "local":
+        if request.url.host == "localhost":
             bodies.append(json.loads(request.content))
         return transport([]).handle_request(request)
 
@@ -341,10 +342,10 @@ def test_table_values_are_quoted_as_header_and_row():
 
 
 def test_source_text_includes_the_text_the_search_source_gave(tmp_path):
-    from assistant.verify import _source_text
+    from assistant.verify import source_text
     (tmp_path / "pages").mkdir()
     (tmp_path / "pages" / "2.txt").write_text("Releases v1.0.1 Assets 2", encoding="utf-8")
     abstract = "Qwen Q4_K_M matched its BF16 accuracy, and Llama Q6_K achieved the highest quantized accuracy."
     source = {"link": "https://github.com/x/y/releases/tag/v1", "snippet": abstract[:40], "full_content": abstract}
-    page, _, both = _source_text(source, "2", None, tmp_path)
+    page, _, both = source_text(source, "2", None, tmp_path)
     assert "Releases v1.0.1" in page and abstract in page and abstract in both

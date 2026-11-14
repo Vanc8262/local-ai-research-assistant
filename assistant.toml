@@ -3,7 +3,7 @@
 
 [assistant]
 default_tier = "local"
-backup_tier = "local-backup"
+backup_tier = "local-backup"             # a label only: `tiers` marks it; use it with -t local-backup. Nothing falls back to it automatically.
 runs_dir = "runs"                        # git-ignored; one JSONL file per run
 searxng_url = "http://127.0.0.1:8888"    # from compose.yaml
 proxy_port = 8765                        # python -m assistant proxy; LDR points here
@@ -41,6 +41,8 @@ searxng_bonus = true
 cache_days = 7
 per_source = 2
 
+# The sampling settings of a model in both assistant.toml and bench.toml must match;
+# tests/test_assistant.py checks it.
 # Local tiers: llama-swap (or LM Studio) on this PC, same port and model names. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
 [tiers.local]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 
-from .. import sysmon
+from assistant import sysmon
 from .base import Ctx, SuiteResult
 
 LOW_RAM_MB = 2000
