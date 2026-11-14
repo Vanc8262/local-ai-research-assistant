@@ -135,3 +135,15 @@ def test_a_local_tier_must_be_on_this_pc():
         with pytest.raises(ValueError, match="must be on this PC"):
             Tier(name="bad", kind="local", base_url=url, model="m")
     Tier(name="cloud", kind="cloud", base_url="https://api.example.com/v1", model="m", api_key_env="K")
+
+
+def test_sampling_matches_between_assistant_and_bench_configs():
+    """The same model is described in both files; a change to one must reach the other."""
+    from bench.config import load_config
+    root = Path(__file__).resolve().parent.parent
+    bench = load_config(root / "bench.toml").models
+    shared = [t for t in load_settings(root / "assistant.toml").tiers.values() if t.model in bench]
+    assert shared, "no model is in both files"
+    for tier in shared:
+        model = bench[tier.model]
+        assert (tier.temperature, tier.extra_body) == (model.temperature, model.extra_body), tier.name

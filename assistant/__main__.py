@@ -226,10 +226,18 @@ def cmd_research(settings, args) -> int:
     return 0 if result.summary and not result.error else 1
 
 
-def cmd_verify(settings, args) -> int:
-    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
+def _report_dir(settings, run: str) -> Path | None:
+    """A research run folder, from its id or path; None (with a message) when it has no report."""
+    run_dir = Path(run) if Path(run).is_dir() else settings.runs_dir / run
     if not (run_dir / "report.md").exists():
         print(f"no report.md in {run_dir}")
+        return None
+    return run_dir
+
+
+def cmd_verify(settings, args) -> int:
+    run_dir = _report_dir(settings, args.run)
+    if run_dir is None:
         return 1
     log = RunLog(settings.runs_dir, task=f"verify: {run_dir.name}")
     return _verify(settings, run_dir, log, tier=args.tier, private=not args.public,
@@ -252,9 +260,8 @@ def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload
 
 
 def cmd_repair(settings, args) -> int:
-    run_dir = Path(args.run) if Path(args.run).is_dir() else settings.runs_dir / args.run
-    if not (run_dir / "report.md").exists():
-        print(f"no report.md in {run_dir}")
+    run_dir = _report_dir(settings, args.run)
+    if run_dir is None:
         return 1
     log = RunLog(settings.runs_dir, task=f"repair: {run_dir.name}")
     return _repair(settings, run_dir, log, tier=args.tier, reload_every=args.reload_every)

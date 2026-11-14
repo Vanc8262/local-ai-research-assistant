@@ -16,6 +16,8 @@ speed_repeats = 3
 code_attempts = 2     # 1 = single shot; 2 = one retry with the test output
 context_length = 8192 # what you loaded the model with; recorded and checked
 
+# The sampling settings of a model in both assistant.toml and bench.toml must match;
+# tests/test_assistant.py checks it.
 # Sampling follows each maker's recommendation for reasoning mode. At temperature 0
 # both models often reasoned until they hit max_tokens (a loop is suspected; the next
 # run records reasoning_tail and loop_suspected to confirm).

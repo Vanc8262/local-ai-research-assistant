@@ -41,6 +41,8 @@ searxng_bonus = true
 cache_days = 7
 per_source = 2
 
+# The sampling settings of a model in both assistant.toml and bench.toml must match;
+# tests/test_assistant.py checks it.
 # Local tiers: llama-swap (or LM Studio) on this PC, same port and model names. Chosen in Stage 0 (see README, "Stage 0 results").
 # 127.0.0.1, not localhost: on Windows "localhost" adds a ~2.3 s IPv6 fallback per request.
 [tiers.local]
