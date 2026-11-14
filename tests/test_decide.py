@@ -187,3 +187,11 @@ def test_check_scores_an_oracle_perfectly(tmp_path):
     out = tmp_path / "check.json"
     decide_check.save([result], out)
     assert "Correct:" in out.with_suffix(".md").read_text(encoding="utf-8")
+
+
+def test_noul_cases_are_balanced_and_tuned_cases_are_in_the_dev_split():
+    cases = decide_check.load_cases("evals/decide_cases.toml")
+    nouls = [c for c in cases if c.question.kind == "noul"]
+    assert 0.4 <= sum(c.expect == "true" for c in nouls) / len(nouls) <= 0.6
+    assert {c.id for c in cases if c.split == "dev"} == {"grade-07", "grade-08"}
+    assert "label-06" not in {c.id for c in cases}   # its label was ambiguous (eval review, 2026-11-14)
