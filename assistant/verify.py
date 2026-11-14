@@ -26,7 +26,7 @@ import httpx
 
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .runlog import RunLog
-from .text import best_passages, html_to_text, keywords
+from .text import best_passages, html_to_text
 
 CITATION_RE = re.compile(r"\[(\d+(?:\s*[,–-]\s*\d+)*)\]")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(*])")
@@ -174,7 +174,7 @@ def split_claims(report: str) -> list[Claim]:
             for group in CITATION_RE.findall(sentence):
                 citations += _expand(group)
             text = " ".join(CITATION_RE.sub("", sentence).replace("**", "").split())
-            if not citations and (_is_lead_in(text) or _is_label(text)):
+            if not citations and (is_lead_in(text) or _is_label(text)):
                 continue   # "The main new features include:" introduces a list; it claims nothing
             if citations or len(text) >= MIN_CLAIM_CHARS:
                 line_claims.append(Claim(text=text, citations=list(dict.fromkeys(citations)), raw=sentence))
@@ -189,7 +189,7 @@ def split_claims(report: str) -> list[Claim]:
     return claims
 
 
-def _is_lead_in(text: str) -> bool:
+def is_lead_in(text: str) -> bool:
     """An uncited line that ends in a colon introduces the list or section after it."""
     return text.endswith(":") and len(text) < 160
 
@@ -249,7 +249,7 @@ def parse_verdict(answer: str) -> dict:
     return {"verdict": verdict, "quote": str(data.get("quote") or ""), "reason": str(data.get("reason") or "")}
 
 
-def _squash(text: str) -> str:
+def squash(text: str) -> str:
     """Letters and digits only: ignores spacing, punctuation, table pipes and quote styles."""
     text = re.sub(r"\[\d{1,2}:\d{2}(?::\d{2})?\]", " ", text)   # video transcript timestamps
     text = unicodedata.normalize("NFKC", text)   # PDF ligatures: "eﬀectively" -> "effectively"
@@ -261,8 +261,8 @@ def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
     quote of two table rows or list items skips what lies between) is in the source, exactly
     once spacing and punctuation are ignored, or as one run covering min_ratio of it. A quote
     stitched together from separate places, or invented, fails."""
-    source = _squash(text)
-    parts = [p for p in (_squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…|\n", quote))
+    source = squash(text)
+    parts = [p for p in (squash(part) for part in re.split(r"\[\s*\.\.\.\s*\]|\.\.\.|…|\n", quote))
              if len(p) >= 12]
     if not parts:
         return False
@@ -276,7 +276,7 @@ def quote_in_source(quote: str, text: str, min_ratio: float = 0.9) -> bool:
     return True
 
 
-class _ReloadingGateway:
+class ReloadingGateway:
     """Passes calls to the gateway, reloading the local model every `every` calls. The local
     server's host memory grows over a long verification (14 GB on a 58-claim report)."""
 
@@ -291,6 +291,12 @@ class _ReloadingGateway:
         return self.gateway.ask(*args, **kwargs)
 
 
+def citation_client(transport=None) -> httpx.Client:
+    """The HTTP client that fetches cited pages, for the check and the repair step."""
+    return httpx.Client(follow_redirects=True, timeout=30.0, transport=transport,
+                        headers={"User-Agent": "local-ai-research-assistant/0.1 (citation check)"})
+
+
 def known_checks(run_dir: Path) -> dict[tuple[str, str], Check]:
     """The verdicts already in a run's verification.json, keyed by claim and source, so a
     second pass only asks the model about sentences that changed. An unchecked result is
@@ -303,12 +309,12 @@ def known_checks(run_dir: Path) -> dict[tuple[str, str], Check]:
         for entry in claim["checks"]:
             check = Check(**entry)
             if check.verdict != "unchecked":
-                known[_check_key(claim["text"], "combined" if check.combined else check.index)] = check
+                known[check_key(claim["text"], "combined" if check.combined else check.index)] = check
     return known
 
 
-def _check_key(text: str, index: str) -> tuple[str, str]:
-    return _squash(text), index
+def check_key(text: str, index: str) -> tuple[str, str]:
+    return squash(text), index
 
 
 def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None = None,
@@ -322,19 +328,18 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
     sources = {str(s.get("index") or n): s for n, s in
                enumerate(json.loads((run_dir / "sources.json").read_text(encoding="utf-8")), start=1)}
     tier = tier or gateway.settings.default_tier
-    gateway = _ReloadingGateway(gateway, reload_every, reloader)
+    gateway = ReloadingGateway(gateway, reload_every, reloader)
     claims = split_claims(report)
-    client = httpx.Client(follow_redirects=True, timeout=30.0, transport=transport,
-                          headers={"User-Agent": "local-ai-research-assistant/0.1 (citation check)"})
+    client = citation_client(transport)
     try:
         for claim in claims:
             for index in claim.citations:
-                claim.checks.append(known.get(_check_key(claim.text, index))
-                                    or _check(claim, index, sources, client, run_dir, gateway, tier, private,
+                claim.checks.append(known.get(check_key(claim.text, index))
+                                    or check_citation(claim, index, sources, client, run_dir, gateway, tier, private,
                                               decider))
             verdicts = {check.verdict for check in claim.checks}
             if len(claim.checks) > 1 and "supported" not in verdicts and "partial" in verdicts:
-                claim.checks.append(known.get(_check_key(claim.text, "combined"))
+                claim.checks.append(known.get(check_key(claim.text, "combined"))
                                     or _combined_check(claim, sources, client, run_dir, gateway, tier, private,
                                                        decider))
     finally:
@@ -350,12 +355,12 @@ def verify_run(run_dir: Path, gateway: Gateway, log: RunLog, *, tier: str | None
     return result
 
 
-def _check(claim: Claim, index: str, sources: dict, client, run_dir: Path, gateway: Gateway,
+def check_citation(claim: Claim, index: str, sources: dict, client, run_dir: Path, gateway: Gateway,
            tier: str, private: bool, decider=None) -> Check:
     source = sources.get(index)
     if source is None:
         return Check(index=index, verdict="unsupported", reason=NO_SOURCE)
-    page, snippet, text = _source_text(source, index, client, run_dir)
+    page, snippet, text = source_text(source, index, client, run_dir)
     if not text:
         return Check(index=index, reason="source could not be read")
     check = Check(index=index, missing_facts=missing_facts(claim.text, text))
@@ -407,7 +412,7 @@ def _second_opinion(check: Check, claim: Claim, passages: list[str], decider) ->
     return check
 
 
-def _source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, str, str]:
+def source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, str, str]:
     """(page, snippet, both). The snippet is kept because some pages fetch as boilerplate
     (video sites, script-only pages) while the snippet carries the text the report used.
     A codex source (file://) is not fetched: its full_content is the chunk LDR was given."""
@@ -417,7 +422,7 @@ def _source_text(source: dict, index: str, client, run_dir: Path) -> tuple[str, 
         # The text the search source handed the writer (an OpenAlex abstract, a Stack Exchange
         # body) counts too: the landing page is often chrome or empty (doi.org, release pages).
         given = source.get("full_content") or ""
-        if given and _squash(given) not in _squash(page):
+        if given and squash(given) not in squash(page):
             page = page + "\n\n" + given if page else given
     else:
         page = source.get("full_content") or ""
@@ -433,7 +438,7 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
     for index in claim.citations:
         if index not in sources:
             continue
-        page, snippet, text = _source_text(sources[index], index, client, run_dir)
+        page, snippet, text = source_text(sources[index], index, client, run_dir)
         if text:
             texts[index] = text
             parts = (best_passages(claim.text, page)[:2] if page else []) + ([snippet] if snippet else [])
@@ -450,7 +455,7 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
     except (PrivacyError, TierNotReady) as exc:
         check.reason = str(exc)
         return check
-    data = _json_object("" if answer.error else answer.content)
+    data = json_object("" if answer.error else answer.content)
     verdict = data.get("verdict")
     check.verdict = verdict if verdict in ("supported", "partial", "unsupported") else "unchecked"
     check.reason = str(data.get("reason") or "")
@@ -477,7 +482,7 @@ def _combined_check(claim: Claim, sources: dict, client, run_dir: Path, gateway,
     return _second_opinion(check, claim, blocks, decider)
 
 
-def _json_object(answer: str) -> dict:
+def json_object(answer: str) -> dict:
     match = re.search(r"\{.*\}", answer, re.DOTALL)
     try:
         data = json.loads(match.group(0)) if match else {}
