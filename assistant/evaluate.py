@@ -7,19 +7,31 @@ For every question in evals/research_questions.toml and every mode, it runs
 - expected facts, the share of the question's `expect` groups the report mentions;
 - time and tokens per tier, from the run log.
 
-The gate for Stage 2 is every claim cited (coverage 100%) and at least 95% of cited
-claims supported, with at most 15% of the claims removed to get there, and at least 75%
-of the question's expected facts in the report. Removing a failed claim always raises the
-citation scores, which is why the removed share and the facts count too. Every question
-runs `runs` times (2 by default), because one run swings a lot.
+The gate for Stage 2, on the repaired report (GATE_* below; Van set these on 2026-11-14 after
+the eval review, reports/eval-review-2026-11-14.md):
+
+- every claim cited (coverage 100%), at least 95% of checked claims supported, no claim left
+  unchecked, and no citation to a missing source;
+- at least 6 claims, so a near-empty report can't pass;
+- at least 80% of claims supported before repair, because repair removes failures and so
+  raises accuracy by construction;
+- at most 15% of the claims, and at most 5 claims, removed or rewritten to get there;
+- at least 75% of the question's expected facts in the report body (not the title, which is
+  the question, and not the Sources list). A fact matches as whole words, so "security" no
+  longer matches "insecurity".
+
+Every question runs `runs` times (2 by default), because one run swings a lot.
 
 The support check is the local model's verdict plus a second opinion from the decider
 (assistant/decide.py): a "supported" it doubts drops to "partial". Free RAM is sampled
-every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md.
+every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md, and
+manifest.json records what the eval ran with (assistant/manifest.py).
 """
 from __future__ import annotations
 
 import csv
+import json
+import re
 import shutil
 import subprocess
 import time
@@ -34,6 +46,7 @@ from .sysmon import Timeline
 from .config import Settings
 from .decide import Decider
 from .gateway import Gateway
+from .manifest import build_manifest, write_manifest
 from .repair import RepairError, repair_run
 from .research import run_research
 from .runlog import RunLog, new_run_id, read_run
@@ -47,12 +60,15 @@ MODES = {
     "offline": (None, "offline", False),   # local, Kiwix copies only: nothing leaves the PC (reported, not gated)
 }
 GATE_COVERAGE, GATE_ACCURACY, GATE_MAX_REMOVED, GATE_MIN_FACTS = 1.0, 0.95, 0.15, 0.75
+GATE_MIN_CLAIMS = 6             # claims in the repaired report
+GATE_MIN_ACCURACY_BEFORE = 0.8  # supported share of checked claims before repair
+GATE_MAX_CHANGED = 5            # claims removed or rewritten by repair; the share cap is GATE_MAX_REMOVED
 RUNS = 2
 RELOAD_EVERY = 40   # verification model calls between reloads; a 58-claim report makes ~100
 FIELDS = ("question", "mode", "run", "outcome", "research_s", "verify_s", "repair_s", "sources", "claims", "coverage",
           "accuracy", "supported", "partial", "unsupported", "uncited", "facts", "claims_before",
           "coverage_before", "accuracy_before", "facts_before", "cited", "rewritten", "removed",
-          "removed_share", "doubted", "decider_errors", "min_free_ram_mb", "local_tokens", "cloud_tokens",
+          "removed_share", "changed", "changed_share", "unchecked", "gate_failures", "doubted", "decider_errors", "min_free_ram_mb", "local_tokens", "cloud_tokens",
           "gate", "run_id", "error", "tavily_sources", "offline_sources", "live_sources", "bonus_sources")
 
 
@@ -65,12 +81,57 @@ class Question:
     codex: bool = False     # the codex holds primary sources for it, so it also runs in codex mode
     public: bool = False    # holds nothing private: may run in hybrid mode and use the Tavily fallback
 
-    def facts_found(self, report: str) -> float | None:
+    def facts_found(self, report: str, exact: bool = True) -> float | None:
+        """Share of the expected facts the report's body states. The title (the question
+        itself) and the Sources list don't count, or a fact named in the question or in a
+        source title would score for free."""
         if not self.expect:
             return None
-        lowered = report.lower()
-        hits = sum(any(term.lower() in lowered for term in group) for group in self.expect)
+        body = report_body(report)
+        if exact:
+            hits = sum(any(fact_pattern(term).search(body) for term in group) for group in self.expect)
+        else:   # the substring match used up to 2026-11-14, for rescoring old evals side by side
+            hits = sum(any(term.lower() in body.lower() for term in group) for group in self.expect)
         return round(hits / len(self.expect), 3)
+
+
+def report_body(report: str) -> str:
+    """The report without its "# <question>" title line and its "## Sources" list."""
+    lines = report.split("\n## Sources", 1)[0].splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+    return "\n".join(lines)
+
+
+def fact_pattern(term: str) -> re.Pattern:
+    """A fact as whole words, case-insensitive, with an optional plural "s"."""
+    return re.compile(rf"(?<!\w){re.escape(term)}s?(?!\w)", re.IGNORECASE)
+
+
+def gate_failures(after: dict, before: dict, *, removed: int, rewritten: int, facts: float | None) -> list[str]:
+    """Why a repaired report fails the Stage 2 gate; empty when it passes. `after` and
+    `before` are verification summaries of the repaired and the original report."""
+    claims_before = before["claims"] or 0
+    changed = removed + rewritten
+    checks = [
+        ((after["citation_coverage"] or 0) >= GATE_COVERAGE, "coverage"),
+        ((after["citation_accuracy"] or 0) >= GATE_ACCURACY, "accuracy"),
+        (not after.get("unchecked"), "unchecked"),
+        (not after["dangling_citations"], "dangling"),
+        ((after["claims"] or 0) >= GATE_MIN_CLAIMS, "few_claims"),
+        ((before["citation_accuracy"] or 0) >= GATE_MIN_ACCURACY_BEFORE, "accuracy_before"),
+        ((changed / claims_before if claims_before else 0) <= GATE_MAX_REMOVED, "changed_share"),
+        (changed <= GATE_MAX_CHANGED, "changed_count"),
+        (facts is None or facts >= GATE_MIN_FACTS, "facts"),
+    ]
+    return [name for ok, name in checks if not ok]
+
+
+def passes_old_gate(after: dict, removed_share: float, facts: float | None) -> bool:
+    """The gate as it was up to 2026-11-14, kept so `rescore` can show both side by side."""
+    return (after["citation_coverage"] or 0) >= GATE_COVERAGE and (after["citation_accuracy"] or 0) >= GATE_ACCURACY \
+        and not after["dangling_citations"] and removed_share <= GATE_MAX_REMOVED \
+        and (facts is None or facts >= GATE_MIN_FACTS)
 
 
 def load_questions(path: str | Path) -> list[Question]:
@@ -109,9 +170,12 @@ def _llama_swap_unload(base_url: str, post) -> None:
 
 def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
              verify_tier: str | None = None, reload: bool = False, runner=None, transport=None,
-             reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0) -> tuple[Path, list[dict]]:
+             reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0,
+             questions_path: str | Path | None = None) -> tuple[Path, list[dict]]:
     out_dir = Path(settings.runs_dir) / f"eval-{new_run_id()}"
     out_dir.mkdir(parents=True, exist_ok=True)
+    write_manifest(out_dir, build_manifest(settings, modes=modes, runs=runs, question_ids=[q.id for q in questions],
+                                           questions_path=questions_path))
     rows = []
     with Timeline(out_dir / "ram.csv", interval_s=ram_interval_s) as ram:
         for question in questions:
@@ -181,9 +245,9 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
     coverage, accuracy = summary["citation_coverage"], summary["citation_accuracy"]
     removed_share = round(repair.count("removed") / repair.before["claims"], 3) if repair.before["claims"] else 0
     facts = question.facts_found(result.report_path.read_text(encoding="utf-8"))
-    passed = (coverage or 0) >= GATE_COVERAGE and (accuracy or 0) >= GATE_ACCURACY \
-        and not summary["dangling_citations"] and removed_share <= GATE_MAX_REMOVED \
-        and (facts is None or facts >= GATE_MIN_FACTS)
+    changed = repair.count("removed") + repair.count("rewritten")
+    failed = gate_failures(summary, repair.before, removed=repair.count("removed"),
+                           rewritten=repair.count("rewritten"), facts=facts)
     row.update(outcome="ok", claims=summary["claims"], coverage=coverage, accuracy=accuracy,
                supported=summary["supported"], partial=summary["partial"],
                unsupported=summary["unsupported"], uncited=summary["uncited"], facts=facts,
@@ -191,7 +255,10 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
                claims_before=repair.before["claims"], coverage_before=repair.before["citation_coverage"],
                accuracy_before=repair.before["citation_accuracy"], facts_before=facts_before,
                cited=repair.count("cited"), rewritten=repair.count("rewritten"), removed=repair.count("removed"),
-               removed_share=removed_share, gate="pass" if passed else "fail", error=result.error, **_tokens(log))
+               removed_share=removed_share, changed=changed,
+               changed_share=round(changed / repair.before["claims"], 3) if repair.before["claims"] else 0,
+               unchecked=summary.get("unchecked", 0), gate_failures=" ".join(failed),
+               gate="fail" if failed else "pass", error=result.error, **_tokens(log))
     return row
 
 
@@ -216,14 +283,17 @@ def write_summary(out_dir: Path, rows: list[dict], lowest_ram: tuple | None = No
 def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
     pct = lambda v: "-" if v in (None, "") else f"{float(v):.0%}"
     lines = ["# Stage 2 research eval", "",
-             f"Gate: coverage {GATE_COVERAGE:.0%}, accuracy at least {GATE_ACCURACY:.0%}, "
-             f"at most {GATE_MAX_REMOVED:.0%} of claims removed, at least {GATE_MIN_FACTS:.0%} of expected facts. "
+             f"Gate: coverage {GATE_COVERAGE:.0%}, accuracy at least {GATE_ACCURACY:.0%} (and at least "
+             f"{GATE_MIN_ACCURACY_BEFORE:.0%} before repair), no unchecked claims, at least {GATE_MIN_CLAIMS} claims, "
+             f"at most {GATE_MAX_REMOVED:.0%} and at most {GATE_MAX_CHANGED} claims removed or rewritten, "
+             f"at least {GATE_MIN_FACTS:.0%} of expected facts in the report body. "
              "\"Before\" columns are the report as written. \"Doubted\" counts passes the decider overruled. "
              "A pass shows the checker accepts the report, not that every sentence is true.", "",
              "| Question | Mode | Run | Outcome | Sources | Claims before | Coverage before | Accuracy before | "
              "Facts before | Doubted | Cited | Rewritten | Removed | Claims | Coverage | Accuracy | Facts | Research | "
              "Verify | Repair | Min free RAM | Gate |",
              "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    gate_cell = lambda r: r.get("gate", "-") + (f" ({r['gate_failures']})" if r.get("gate_failures") else "")
     for r in rows:
         lines.append(f"| {r['question']} | {r['mode']} | {r.get('run', 1)} | {r.get('outcome', '')} | "
                      f"{r.get('sources', '-')} | "
@@ -232,7 +302,7 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
                      f"{r.get('removed', '-')} | {r.get('claims', '-')} | {pct(r.get('coverage'))} | "
                      f"{pct(r.get('accuracy'))} | {pct(r.get('facts'))} | {r.get('research_s', '-')} s | "
                      f"{r.get('verify_s', '-')} s | {r.get('repair_s', '-')} s | {r.get('min_free_ram_mb', '-')} MB | "
-                     f"{r.get('gate', '-')} |")
+                     f"{gate_cell(r)} |")
     for mode in dict.fromkeys(r["mode"] for r in rows):
         done = [r for r in rows if r["mode"] == mode and r.get("outcome") == "ok"]
         if done:
@@ -260,4 +330,70 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
     if lowest_ram:
         lines.append(f"\n**Lowest free RAM:** {lowest_ram[0]} MB, during {lowest_ram[1] or 'setup'}. "
                      "Samples every 15 s are in ram.csv.")
+    return "\n".join(lines) + "\n"
+
+
+def rescore(eval_dir: Path, questions: list[Question], runs_dir: Path | None = None) -> list[dict]:
+    """Score a finished eval again from its saved reports, with no model calls. Each report
+    gets three gates: as run; the old gate with expected facts counted on the body only; and
+    the current gate (GATE_* above, whole-word facts). The expected facts come from
+    `questions`, so a question file edited since the eval scores the new facts. Reads each
+    run's report.md, report.original.md and repair.json; writes rescore.csv and rescore.md
+    next to summary.csv.
+
+    A report edited after its run would score differently from the live eval; nothing here
+    can tell."""
+    eval_dir = Path(eval_dir)
+    runs_dir = Path(runs_dir) if runs_dir else eval_dir.parent
+    by_id = {q.id: q for q in questions}
+    with (eval_dir / "summary.csv").open(encoding="utf-8") as handle:
+        old_rows = list(csv.DictReader(handle))
+    rows = []
+    for old in old_rows:
+        row = {key: old.get(key, "") for key in ("question", "mode", "run", "outcome", "facts", "gate")}
+        row.update(facts_body="", facts_new="", gate_body="", gate_new="", gate_failures="")
+        run_dir, question = runs_dir / old.get("run_id", ""), by_id.get(old["question"])
+        if old.get("outcome") == "ok" and question and (run_dir / "repair.json").exists():
+            repair = json.loads((run_dir / "repair.json").read_text(encoding="utf-8"))
+            actions = [change["action"] for change in repair["changes"]]
+            report = (run_dir / "report.md").read_text(encoding="utf-8")
+            row["facts_body"] = question.facts_found(report, exact=False)
+            row["facts_new"] = question.facts_found(report)
+            row["gate_body"] = "pass" if passes_old_gate(repair["after"], float(old.get("removed_share") or 0),
+                                                         row["facts_body"]) else "fail"
+            failed = gate_failures(repair["after"], repair["before"], removed=actions.count("removed"),
+                                   rewritten=actions.count("rewritten"), facts=row["facts_new"])
+            row["gate_new"], row["gate_failures"] = ("fail" if failed else "pass"), " ".join(failed)
+        rows.append(row)
+    fields = ("question", "mode", "run", "outcome", "facts", "facts_body", "facts_new",
+              "gate", "gate_body", "gate_new", "gate_failures")
+    with (eval_dir / "rescore.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    (eval_dir / "rescore.md").write_text(rescore_markdown(eval_dir.name, rows), encoding="utf-8")
+    return rows
+
+
+def rescore_markdown(name: str, rows: list[dict]) -> str:
+    pct = lambda v: "-" if v in (None, "") else f"{float(v):.0%}"
+    lines = [f"# Rescore of {name}", "",
+             "\"As run\" is the eval's own result. \"Body only\" is the old gate with expected facts counted "
+             "on the report body (no title, no Sources list). \"Current\" is today's gate: no unchecked claims, "
+             f"at least {GATE_MIN_CLAIMS} claims, at least {GATE_MIN_ACCURACY_BEFORE:.0%} accuracy before repair, "
+             f"at most {GATE_MAX_REMOVED:.0%} and {GATE_MAX_CHANGED} claims removed or rewritten, whole-word facts. "
+             "A pass shows the checker accepts the report, not that every sentence is true.", "",
+             "| Question | Mode | Run | Facts as run | Facts body only | Facts current | Gate as run | "
+             "Gate body only | Gate current | Fails on |",
+             "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['question']} | {r['mode']} | {r['run']} | {pct(r['facts'])} | {pct(r['facts_body'])} | "
+                     f"{pct(r['facts_new'])} | {r['gate'] or '-'} | {r['gate_body'] or '-'} | {r['gate_new'] or '-'} | "
+                     f"{r['gate_failures'] or '-'} |")
+    lines.append("")
+    for mode in dict.fromkeys(r["mode"] for r in rows):
+        done = [r for r in rows if r["mode"] == mode]
+        count = lambda key: sum(r[key] == "pass" for r in done)
+        lines.append(f"**{mode}:** of {len(done)}, {count('gate')} passed as run, {count('gate_body')} with "
+                     f"body-only facts, {count('gate_new')} under the current gate.")
     return "\n".join(lines) + "\n"

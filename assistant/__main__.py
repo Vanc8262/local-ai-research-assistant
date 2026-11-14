@@ -16,6 +16,7 @@
     python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
+    python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
     python -m assistant decide probe [-t local]             which decision method works on a local tier
     python -m assistant decide check [-t local -t local-backup] [--debias]
                                                             score the decider on evals/decide_cases.toml
@@ -38,7 +39,7 @@ from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
-from .evaluate import MODES, load_questions, reload_model, run_eval
+from .evaluate import MODES, load_questions, reload_model, rescore, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
@@ -300,10 +301,16 @@ def cmd_eval(settings, args) -> int:
     # offline mode runs by default only once Kiwix copies are configured
     modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
     out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
-                              reload=not args.no_reload, runs=args.runs)
+                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions)
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
+
+
+def cmd_rescore(settings, args) -> int:
+    rows = rescore(Path(args.eval_dir), load_questions(args.questions), settings.runs_dir)
+    print((Path(args.eval_dir) / "rescore.md").read_text(encoding="utf-8"))
+    return 0 if rows else 1
 
 
 def cmd_decide(settings, args) -> int:
@@ -473,6 +480,9 @@ def main(argv: list[str] | None = None) -> int:
                           help="never fall back to Tavily, even for these public questions")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
+    again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
+    again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
+    again.add_argument("--questions", default="evals/research_questions.toml")
     dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")
     dec.add_argument("action", choices=("probe", "check"))
     dec.add_argument("-t", "--tier", action="append", help="local tier; repeat to compare (default: the default tier)")
@@ -494,7 +504,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "decide": cmd_decide, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "rescore": cmd_rescore, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 

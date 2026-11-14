@@ -24,6 +24,7 @@ class Case:
     state: str
     question: Question
     expect: str
+    split: str = "test"   # "dev": built from an eval failure or used to tune the decider; scored apart
 
 
 def load_cases(path: str | Path) -> list[Case]:
@@ -42,8 +43,11 @@ def load_cases(path: str | Path) -> list[Case]:
         expect = str(entry["expect"]).lower() if kind == "noul" else str(entry["expect"])
         if expect not in question.options:
             raise ValueError(f"case {entry['id']}: expect {expect!r} is not one of {list(question.options)}")
+        split = entry.get("split", "test")
+        if split not in ("test", "dev"):
+            raise ValueError(f"case {entry['id']}: split must be \"test\" or \"dev\", not {split!r}")
         cases.append(Case(entry["id"], entry["use"], int(entry.get("priority", 1)), entry["state"],
-                          question, expect))
+                          question, expect, split))
     return cases
 
 
@@ -52,6 +56,7 @@ def run_check(decider: Decider, cases: list[Case], tier: str) -> dict:
     for case in cases:
         decision: Decision = decider.ask(case.state, case.question, purpose=f"check:{case.id}", tier=tier)
         rows.append({"id": case.id, "use": case.use, "priority": case.priority, "kind": case.question.kind,
+                     "split": case.split,
                      "expect": case.expect, "correct": decision.answer == case.expect,
                      "p_expected": decision.probabilities.get(case.expect, 0.0), **decision.to_record()})
     return {"tier": tier, "debias": decider.debias, "rows": rows, "summary": summarise(rows)}
@@ -80,6 +85,11 @@ def summarise(rows: list[dict]) -> dict:
         "confidence_wrong": _mean([r["confidence"] for r in wrong]),
         "low_mass": sum(r["mass"] < 0.5 for r in answered),
         "uses": uses,
+        "splits": {split: {"cases": len(group := [r for r in rows if r.get("split", "test") == split]),
+                           "correct": sum(r["correct"] for r in group)}
+                   for split in dict.fromkeys(r.get("split", "test") for r in rows)},
+        "noul_true_share": round(sum(r["expect"] == "true" for r in nouls) / len(nouls), 3)
+        if (nouls := [r for r in rows if r["kind"] == "noul"]) else None,
         "errors": [f"{r['id']}: {r['error']}" for r in rows if r["error"]],
     }
 
@@ -91,6 +101,8 @@ def check_markdown(results: list[dict]) -> str:
         lines += [f"## {result['tier']}" + (" (debiased)" if result["debias"] else ""), "",
                   f"- Correct: {s['correct']} of {s['cases']} ({s['accuracy']:.0%})" if s["accuracy"] is not None
                   else "- No cases",
+                  "- By split: " + ", ".join(f"{name} {v['correct']} of {v['cases']}" for name, v in s["splits"].items())
+                  + " (dev cases came from eval failures or tuned the decider, so the test split is the fair score)",
                   f"- Methods: {', '.join(f'{m} {n}' for m, n in s['methods'].items()) or 'none'}",
                   f"- Median time per decision: {s['median_s']} s",
                   f"- Mean confidence when right: {s['confidence_right']}, when wrong: {s['confidence_wrong']}",

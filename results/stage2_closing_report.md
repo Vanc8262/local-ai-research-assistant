@@ -92,3 +92,36 @@ Results files: `stage2_hybrid_2026-11-14.md`, `stage2_eval_2026-11-14.md` (Tavil
 - [x] Hybrid rerun on the current main: 10 of 10 (2026-11-14).
 
 This report is added to `results/` in the sign-off PR. Merging that PR closes Stage 2.
+
+## Corrections after the eval review (added 2026-11-14)
+
+`reports/eval-review-2026-11-14.md` checked this report's numbers against the code and the saved runs. The text above is left as Van approved it, and these corrections apply to it:
+
+- **Expected facts were inflated.** The facts check scored the whole report, including the title (which is the question) and the Sources list. So 3 of gguf-quants' 4 facts matched for free, and `retriev` and `3.15` matched from the question text and source titles. Counted on the body only, the review re-scored the saved reports:
+
+  | Run | Reported | Body only |
+  |---|---|---|
+  | local + Tavily, 11-13 | 9/10 | 7/10 |
+  | local, Tavily off, 11-14 | 8/10 | 6/10 |
+  | codex, 11-13b | 10/10 | 9/10 |
+  | hybrid (both dates) | 10/10 | 10/10 |
+
+  These figures are the review's. Running `python -m assistant rescore runs/eval-<id>` on the desktop reproduces them from the saved reports, and also shows the gate as it is now.
+- **"Local 9 of 10 with Tavily"** is mostly Gemma writing from Tavily, because Tavily supplied 99 of 102 sources.
+- **"8 of 10" without Tavily** is the best of three runs (7, 6 and 8), and each of those ran on different code. Pooled, it is 21 of 30 (70%).
+- **"None came from a commercial search service"** is not right: 12 of 79 sources came through SearXNG, which queries Google, Brave and DuckDuckGo. The statement that no *keyed* service was used is correct.
+- **Local 6 of 10 against hybrid 10 of 10** is not a significant difference (Fisher p = 0.087, McNemar p = 0.125). The later runs show no measurable gap.
+- **Tuned on its own test set:** the gate, the checker and the codex were all revised on the same 5 questions after each failure. No held-out questions exist yet.
+- **The history table isn't like for like.** It mixes questions with reports, and the gate changed between rows.
+- **Claim counts:** local Tavily-off reports have 5 to 20 claims, not 9 to 25, and codex aws-pillars run 2 has 4.
+
+What still holds: the pipeline runs end to end, free RAM stays above 4 GB, and the privacy gate is default-deny. Read Stage 2 as "all three modes produce plausible, mostly checker-clean reports on 5 easy public questions". It does not show that hybrid beats local, or that local meets a 9 of 10 gate.
+
+**The gate is stricter from now on** (Van, 2026-11-14; `assistant/evaluate.py`). A report also needs:
+
+- no unchecked claims, and at least 6 claims;
+- at least 80% of its claims supported before repair;
+- at most 15% of its claims, and at most 5 claims, removed or rewritten;
+- its expected facts in the body, matched as whole words.
+
+The python-315 question now names Python 3.15. The Stage 2 numbers above were measured under the old gate.

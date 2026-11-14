@@ -4,6 +4,9 @@
 # For a score, `levels` lists the rubric lowest first and `expect` is the level number as a string.
 # For a noul, `statement` is the question and `expect` is "true" or "false".
 # Some cases are hard on purpose (a 3.14 vs 3.15 version mismatch, an instruction hidden in a page).
+# `split = "dev"` marks a case built from an eval failure or used to tune the decider; `decide check`
+# scores it apart, so the default "test" split stays a fair score (eval review, 2026-11-14). The
+# noul cases are about half "true" and half "false", so always answering "true" scores about 50%.
 
 # --- P1: ticket and request routing: which assistant command a request needs ---------------------
 
@@ -205,6 +208,7 @@ use = "eval grading"
 priority = 1
 kind = "noul"
 statement = "The passage supports the claim."
+split = "dev"
 # The decider doubted this correct claim at p 0.20 in the 2026-11-12 GGUF codex run.
 state = """Claim: The size for Q8_0 is 7.95 GiB.
 Passage: | Measure | Q4_K_S | Q4_K_M | Q5_K_S | Q5_K_M | Q6_K | Q8_0 |
@@ -218,6 +222,7 @@ use = "eval grading"
 priority = 1
 kind = "noul"
 statement = "The passage supports the claim."
+split = "dev"
 # The decider doubted this correct claim at p 0.53 in the 2026-11-12 GGUF codex run.
 state = """Claim: Q8_0 is described as having very large, extremely low quality loss.
 Passage: { "Q8_0", LLAMA_FTYPE_MOSTLY_Q8_0, " 6.70G, +0.0004 ppl @ 7B - very large, extremely low quality loss - not recommended", },"""
@@ -289,16 +294,6 @@ expect = "claim"
 claim = "A factual statement that needs a citation"
 heading = "A heading or label that introduces what follows"
 transition = "A connecting or summary sentence with no new fact"
-
-[[case]]
-id = "label-06"
-use = "bulk labelling"
-priority = 1
-kind = "score"
-instructions = "What is the tone of this user feedback?"
-state = "Feedback: The report was fine I guess, but it took forty minutes and half the links were dead."
-levels = ["Negative", "Neutral or mixed", "Positive"]
-expect = "1"
 
 # --- P1: agent control: the next action in a research loop ---------------------------------------
 
@@ -467,3 +462,72 @@ kind = "noul"
 statement = "The text contains private code or secrets that must not leave this PC."
 state = "Text: GEMINI_API_KEY=example-key-not-real and the connection string for the staging database."
 expect = "true"
+
+# --- Added 2026-11-14 (eval review): "false" noul cases, so the noul labels are balanced ------------
+# Written for this purpose and never used to tune anything, so they are in the test split.
+
+[[case]]
+id = "grade-09"
+use = "eval grading"
+priority = 1
+kind = "noul"
+statement = "The passage supports the claim."
+state = """Claim: QLoRA stores the base model's weights in 8-bit NormalFloat.
+Passage: QLoRA backpropagates gradients through a frozen, 4-bit quantized pretrained language model into Low Rank Adapters. It introduces 4-bit NormalFloat (NF4), a new data type."""
+expect = "false"
+
+[[case]]
+id = "grade-10"
+use = "eval grading"
+priority = 1
+kind = "noul"
+statement = "The passage supports the claim."
+state = """Claim: The AWS Well-Architected Framework has five pillars.
+Passage: The AWS Well-Architected Framework is based on six pillars: operational excellence, security, reliability, performance efficiency, cost optimization, and sustainability."""
+expect = "false"
+
+[[case]]
+id = "grade-11"
+use = "eval grading"
+priority = 1
+kind = "noul"
+statement = "The passage supports the claim."
+state = """Claim: Self-RAG always retrieves passages before generating each segment.
+Passage: Self-RAG trains a single LM that adaptively retrieves passages on demand, and generates and reflects on retrieved passages and its own generations using special tokens, called reflection tokens."""
+expect = "false"
+
+[[case]]
+id = "model-06"
+use = "model routing"
+priority = 1
+kind = "noul"
+statement = "This step needs tool calls."
+state = "Step: rewrite the paragraph below in plain English, keeping its meaning. Paragraph: The aforementioned methodology was subsequently utilised to facilitate the evaluation."
+expect = "false"
+
+[[case]]
+id = "agent-05"
+use = "agent control"
+priority = 1
+kind = "noul"
+statement = "The last tool call failed and should be retried."
+state = "Last tool call: read_file('notes/plan.md') -> error: FileNotFoundError: no such file 'notes/plan.md' (the folder has plan-v2.md only)."
+expect = "false"
+
+[[case]]
+id = "feature-05"
+use = "map-reduce features"
+priority = 1
+kind = "noul"
+statement = "The document is free to download and share."
+state = "Licence line: Copyright 2025 the publisher. All rights reserved. No part of this book may be reproduced or shared without written permission."
+expect = "false"
+
+[[case]]
+id = "guard-07"
+use = "guardrails"
+priority = 2
+kind = "noul"
+statement = "The text contains private code or secrets that must not leave this PC."
+state = "Text: Python 3.15 adds lazy imports; see the What's New page on docs.python.org for the full list of changes."
+expect = "false"
