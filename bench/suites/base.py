@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from ..client import ChatResult
+from assistant.client import ChatResult
 from ..config import Config, ModelCfg
 
 # A chat function takes (messages, tools, max_tokens) and returns a ChatResult.

@@ -10,7 +10,7 @@ from assistant.config import Settings, Tier
 from assistant.gateway import Gateway
 from assistant.proxy import Proxy, make_server
 from assistant.runlog import RunLog, read_run
-from bench.client import ChatClient
+from assistant.client import ChatClient
 
 
 def settings_for(tmp_path) -> Settings:

@@ -16,7 +16,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from bench.client import ChatResult, assistant_message
+from .client import ChatResult, assistant_message
 
 from .config import Settings, Tier
 from .gateway import Gateway, PrivacyError, TierNotReady

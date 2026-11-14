@@ -29,7 +29,7 @@ from pathlib import Path
 
 import httpx
 
-from bench.sysmon import Timeline
+from .sysmon import Timeline
 
 from .config import Settings
 from .decide import Decider

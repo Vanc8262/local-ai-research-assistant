@@ -3,7 +3,7 @@ import json
 import httpx
 
 import fake_model
-from bench.client import ChatClient, assistant_message
+from assistant.client import ChatClient, assistant_message
 
 
 def client_for(handler):
@@ -121,7 +121,7 @@ def test_models_fall_back_to_openai_list():
 
 
 def test_cut_off_reply_keeps_reasoning_tail_and_flags_a_loop():
-    from bench.client import REASONING_TAIL_CHARS, ChatResult
+    from assistant.client import REASONING_TAIL_CHARS, ChatResult
     looping = ChatResult(reasoning="Let me check the edge case again. " * 200, finish_reason="length")
     record = looping.timing()
     assert record["loop_suspected"] is True

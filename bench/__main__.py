@@ -13,8 +13,10 @@ import datetime as dt
 import platform
 import sys
 
-from . import __version__, sysmon
-from .client import ChatClient
+from assistant import sysmon
+from assistant.client import ChatClient
+
+from . import __version__
 from .config import Config, ModelCfg, load_config
 from .report import write_report
 from .results import RunWriter, slug

@@ -6,7 +6,7 @@ replace the caller's flag with a check of where the content came from.
 """
 from __future__ import annotations
 
-from bench.client import ChatClient, ChatResult
+from .client import ChatClient, ChatResult
 
 from .config import Settings, Tier
 from .runlog import RunLog

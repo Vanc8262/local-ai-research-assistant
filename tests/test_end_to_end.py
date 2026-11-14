@@ -6,7 +6,7 @@ import pytest
 
 import bench.__main__ as cli
 import fake_model
-from bench.client import ChatClient
+from assistant.client import ChatClient
 from bench.results import read_manual_scores
 
 
@@ -120,7 +120,7 @@ def test_headroom_command(project):
 
 
 def test_suffix_without_system_message_and_truncation_count(tmp_path):
-    from bench.client import ChatResult
+    from assistant.client import ChatResult
     from bench.config import Config, ModelCfg
     from bench.report import _with_truncation
     from bench.suites.base import Ctx, speed_metrics

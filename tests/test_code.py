@@ -1,6 +1,6 @@
 import pytest
 
-from bench.client import ChatResult
+from assistant.client import ChatResult
 from bench.suites.code_editing import build_prompt, extract_code, load_tasks, run_task, run_tests
 
 TASKS = load_tasks()
