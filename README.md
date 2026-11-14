@@ -75,7 +75,7 @@ The code-locality check is default-deny. Anything read from a repo is tagged pri
 | 0. Baseline | Model downloads and a benchmark harness | One default model and one fallback chosen from measured numbers |
 | 1. Skeleton | Docker Compose with SearXNG, one model client, run log | The same prompt runs on the local model and on Gemini through one interface |
 | 2. Research | Local Deep Research wired in; local documents indexed | Every claim in a report traces to a source |
-| 3. Implementation | The code-editing loop on a sandbox repo, local model only | At least 6 of 10 tasks pass unattended; failures stop cleanly |
+| 3. Implementation | The code-editing loop on a sandbox repo, local model only | At least 12 of 20 tasks pass unattended in each of two runs; failures stop cleanly |
 | 4. Router and policy | Code-locality check, escalation rules, quota tracking, fallback | A test proves private code cannot reach a cloud tier |
 | 5. End to end | Research to plan to implementation to summary on a real repo | One real task completed from a single request |
 
