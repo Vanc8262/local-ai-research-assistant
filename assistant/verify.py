@@ -20,23 +20,19 @@ import json
 import re
 import unicodedata
 from dataclasses import asdict, dataclass, field
-from html.parser import HTMLParser
 from pathlib import Path
 
 import httpx
 
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .runlog import RunLog
+from .text import best_passages, html_to_text, keywords
 
 CITATION_RE = re.compile(r"\[(\d+(?:\s*[,–-]\s*\d+)*)\]")
 SENTENCE_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z\"'(*])")
 # Hard facts that must appear in a source verbatim: versions like 3.15 or 1.10.7,
 # percentages, and numbers with three or more digits (years, sizes, counts).
 FACT_RE = re.compile(r"\b\d+\.\d+(?:\.\d+)*\b|\b\d+(?:\.\d+)?\s?%|\b\d{3,}\b")
-STOPWORDS = set("""the and for with that this from into over than then they them their there these those
-which while where when what about also have has had been being were will would could should can
-such more most many much some other only just each both very like using used uses new""".split())
-PASSAGE_CHARS, PASSAGE_STEP, PASSAGES = 700, 500, 3
 # Verdicts are judgements, not writing: sample greedily so the same report gets the same
 # verdicts on every run, and a change in the score measures a change in the code.
 TEMPERATURE = 0.0
@@ -215,33 +211,6 @@ def _expand(group: str) -> list[str]:
     return numbers
 
 
-class _Text(HTMLParser):
-    SKIP = {"script", "style", "nav", "header", "footer", "noscript", "svg"}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.parts: list[str] = []
-        self.depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        if tag in self.SKIP:
-            self.depth += 1
-
-    def handle_endtag(self, tag):
-        if tag in self.SKIP and self.depth:
-            self.depth -= 1
-
-    def handle_data(self, data):
-        if not self.depth:
-            self.parts.append(data)
-
-
-def html_to_text(html: str) -> str:
-    parser = _Text()
-    parser.feed(html)
-    return " ".join(" ".join(parser.parts).split())
-
-
 def fetch_source(client: httpx.Client, url: str, cache: Path) -> str:
     """Page text for a cited URL, cached in the run folder so a re-check is offline."""
     if cache.exists():
@@ -268,22 +237,6 @@ def missing_facts(claim: str, source: str) -> list[str]:
     facts = list(dict.fromkeys(f.replace(" ", "") for f in FACT_RE.findall(claim)))
     compact = source.replace(" %", "%")
     return [fact for fact in facts if fact not in compact]
-
-
-def keywords(text: str) -> set[str]:
-    return {w for w in re.findall(r"[a-z0-9][a-z0-9.+_-]{2,}", text.lower()) if w not in STOPWORDS}
-
-
-def best_passages(claim: str, source: str) -> list[str]:
-    """The windows of the source that share most words with the claim. A source that fits
-    in two windows, such as a ~1,000-character codex chunk, is passed whole."""
-    if len(source) <= 2 * PASSAGE_CHARS:
-        return [source]
-    words = keywords(claim)
-    starts = list(range(0, len(source) - PASSAGE_CHARS, PASSAGE_STEP)) + [len(source) - PASSAGE_CHARS]
-    windows = [source[start:start + PASSAGE_CHARS] for start in starts]   # the last one reaches the end
-    scored = sorted(windows, key=lambda w: sum(word in w.lower() for word in words), reverse=True)
-    return scored[:PASSAGES]
 
 
 def parse_verdict(answer: str) -> dict:

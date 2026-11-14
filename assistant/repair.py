@@ -34,8 +34,9 @@ import httpx
 
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .runlog import RunLog
+from .text import best_passages, keywords
 from .verify import (BOLD_HEADING_RE, CITATION_RE, NUMBERED_RE, Claim, Verification, _check, _is_lead_in,
-                     _check_key, _json_object, _ReloadingGateway, _source_text, _squash, best_passages, keywords,
+                     _check_key, _json_object, _ReloadingGateway, _source_text, _squash,
                      known_checks, verify_run)
 
 ORIGINALS = ("report.md", "verification.json", "verification.md")

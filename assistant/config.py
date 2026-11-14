@@ -8,6 +8,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .sources import LIVE_SOURCES
+
 KINDS = ("local", "cloud")
 MODEL_SERVERS = ("lmstudio", "llama-swap")
 LOOPBACK = ("127.0.0.1", "localhost", "::1")   # hosts that are this PC
@@ -86,7 +88,6 @@ class SearchSettings:
     per_source: int = 2                  # hits any one source may place in a search's results
 
     def __post_init__(self) -> None:
-        from .sources import LIVE_SOURCES   # here, not at the top: sources imports verify, which imports config
         unknown = set(self.live) - set(LIVE_SOURCES)
         if unknown:
             raise ValueError(f"[search] live: unknown sources {sorted(unknown)}; known: {LIVE_SOURCES}")

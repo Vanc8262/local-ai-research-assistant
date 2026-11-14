@@ -47,3 +47,17 @@ def test_tavily_answers_only_when_searxng_is_empty_and_a_key_was_passed():
     (hit,) = search_pages("http://127.0.0.1:8888", "q", transport=transport, tavily_key="tvly-k")
     assert hit["engine"] == "tavily" and hit["text"] == "from tavily"
     assert ("api.tavily.com", "Bearer tvly-k") in seen
+
+
+def test_web_pages_loads_without_the_gateway():
+    """ldr_runner imports web_pages inside LDR's venv; it must not drag in the gateway,
+    the model client or the verifier."""
+    import subprocess
+    import sys
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    code = ("import sys, assistant.web_pages; "
+            "print(sorted(m for m in sys.modules if m.startswith(('assistant.', 'bench'))))")
+    out = subprocess.run([sys.executable, "-c", code], cwd=root, capture_output=True, text=True, check=True).stdout
+    for module in ("assistant.gateway", "assistant.client", "assistant.verify", "bench"):
+        assert f"'{module}" not in out, out

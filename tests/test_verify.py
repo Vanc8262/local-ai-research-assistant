@@ -6,7 +6,8 @@ import fake_model
 from assistant.config import Settings, Tier
 from assistant.gateway import Gateway
 from assistant.runlog import RunLog, read_run
-from assistant.verify import (best_passages, html_to_text, missing_facts, parse_verdict, split_claims,
+from assistant.text import best_passages, html_to_text
+from assistant.verify import (missing_facts, parse_verdict, split_claims,
                               verify_run, quote_in_source, PROMPT, COMBINED_PROMPT)
 
 REPORT = """# What is new in Python 3.15?

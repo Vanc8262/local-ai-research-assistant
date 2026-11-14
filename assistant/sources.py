@@ -36,7 +36,7 @@ from urllib.parse import urljoin
 
 import httpx
 
-from assistant.verify import html_to_text
+from assistant.text import html_to_text
 
 USER_AGENT = "local-ai-research-assistant/0.1 (personal research tool; low volume)"
 LAYERS = ("offline", "live", "bonus")

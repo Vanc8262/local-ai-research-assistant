@@ -1,8 +1,9 @@
 """Run one Local Deep Research job. Executed by LDR's own Python, not the project's.
 
 LDR lives in a separate venv (it needs Python 3.12+ and ~2.5 GB of dependencies),
-so `assistant research` starts this file there as a subprocess. It imports nothing
-from the assistant package. The job arrives as JSON on stdin:
+so `assistant research` starts this file there as a subprocess. From the assistant
+package it imports only web_pages.py and the standard-library-only modules that needs
+(assistant.text, assistant.config), never the gateway or the model client. The job arrives as JSON on stdin:
 
     {"query": "...", "mode": "quick" | "report", "overrides": {...}, "out": "path/result.json",
      "codex": {"index_dir": "...", "embed_url": "...", "embed_model": "...", "k": 8,
@@ -77,7 +78,7 @@ def main() -> int:
                                                             codex["embed_model"], codex.get("k", 8))}
         if job.get("pages"):
             from pathlib import Path
-            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # for `import assistant.verify`
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # for `import assistant.text`
             from web_pages import load_retriever as load_pages
             kwargs["retrievers"] = {"pages": load_pages(job["pages"]["search_url"])}
             if job["pages"].get("min_sources"):
