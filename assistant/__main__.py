@@ -45,7 +45,7 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
-from .verify import verify_run
+from .verify import CAVEAT, failures, verify_run
 from . import vault
 
 
@@ -247,9 +247,8 @@ def _verify(settings, run_dir: Path, log: RunLog, *, tier, private: bool, reload
             decider.close()
         gateway.close()
     print((run_dir / "verification.md").read_text(encoding="utf-8"))
-    summary = result.summary()
     print(f"Saved: {run_dir / 'verification.json'}")
-    return 0 if not (summary["uncited"] or summary["unsupported"] or summary["dangling_citations"]) else 1
+    return _exit_code(result.summary())
 
 
 def cmd_repair(settings, args) -> int:
@@ -275,8 +274,14 @@ def _repair(settings, run_dir: Path, log: RunLog, *, tier, reload_every: int = 0
         gateway.close()
     print((run_dir / "repair.md").read_text(encoding="utf-8"))
     print(f"Saved: {run_dir / 'report.md'} (original: report.original.md)")
-    return 0 if not (result.after["uncited"] or result.after["unsupported"] or result.after["partial"]
-                     or result.after["dangling_citations"]) else 1
+    return _exit_code(result.after)
+
+
+def _exit_code(summary: dict) -> int:
+    """0 only when the citation check passes, which shows the checker accepts the report."""
+    reasons = failures(summary)
+    print(f"Citation check: {'FAIL (' + ', '.join(reasons) + ')' if reasons else 'pass'}. {CAVEAT}")
+    return 1 if reasons else 0
 
 
 def cmd_eval(settings, args) -> int:

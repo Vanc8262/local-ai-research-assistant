@@ -149,6 +149,20 @@ class Verification:
         }
 
 
+# What keeps a checked report from passing. "unchecked" and "partial" fail too: a report whose
+# checks never ran (the model was down, a source could not be read) has shown nothing.
+FAILING = ("uncited", "unsupported", "partial", "unchecked", "dangling_citations")
+CAVEAT = "A pass shows the checker accepts the report, not that every sentence is true."
+
+
+def failures(summary: dict) -> list[str]:
+    """Why a report with this summary fails the citation check, e.g. ["3 unchecked"]; empty
+    when it passes. A report with no claims fails, because nothing was checked."""
+    if not summary["claims"]:
+        return ["no claims to check"]
+    return [f"{summary[key]} {key.replace('_', ' ')}" for key in FAILING if summary[key]]
+
+
 def split_claims(report: str) -> list[Claim]:
     """Sentences and bullets of the report body, each with the source numbers it cites."""
     body = report.split("\n## Sources", 1)[0]
@@ -529,7 +543,9 @@ def verification_markdown(result: Verification) -> str:
              f"({s['supported']} supported, {s['partial']} partial, {s['unsupported']} unsupported, "
              f"{s['unchecked']} unchecked)",
              f"- Citations to a missing source: {s['dangling_citations']}",
-             f"- Passes the decider doubted: {s['doubted']} (decider errors: {s['decider_errors']})", "",
+             f"- Passes the decider doubted: {s['doubted']} (decider errors: {s['decider_errors']})",
+             f"- Result: {'fails (' + ', '.join(failures(s)) + ')' if failures(s) else 'passes'}", "",
+             CAVEAT, "",
              "## Claims that need attention", ""]
     flagged = [c for c in result.claims
                if c.verdict != "supported" or any(k.reason == NO_SOURCE for k in c.checks)
