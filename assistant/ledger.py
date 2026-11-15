@@ -50,11 +50,14 @@ def record_attempt(ledger: Path, row: dict) -> None:
     """Append one attempt with status "started"; writes the header if the file is new or empty."""
     path = Path(ledger)
     path.parent.mkdir(parents=True, exist_ok=True)
-    new = not path.is_file() or not path.read_text(encoding="utf-8").strip()
+    text = path.read_text(encoding="utf-8") if path.is_file() else ""
+    new = not text.strip()
     with path.open("w" if new else "a", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=LEDGER_FIELDS, extrasaction="ignore", lineterminator="\n")
         if new:
             writer.writeheader()
+        elif not text.endswith("\n"):   # a hand-edited file without a final newline: don't glue rows together
+            handle.write("\n")
         writer.writerow({**{field: "" for field in LEDGER_FIELDS}, **row, "status": "started"})
 
 

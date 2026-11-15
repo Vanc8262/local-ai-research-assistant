@@ -24,6 +24,7 @@ from .sources import CACHE_VERSION
 
 GGUF_ENVS = ("GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF", "REFEREE_GGUF")
 CHUNK = 1 << 20
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def sha256_file(path: Path) -> str:
@@ -37,7 +38,7 @@ def sha256_file(path: Path) -> str:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True,
-                              cwd=Path(__file__).resolve().parent.parent).stdout.strip()
+                              cwd=REPO_ROOT).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return ""
 

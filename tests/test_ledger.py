@@ -67,6 +67,14 @@ def test_missing_or_header_only_ledger_allows_an_attempt(tmp_path):
     assert len(read_ledger(led)) == 1
 
 
+def test_record_attempt_adds_a_missing_final_newline(tmp_path):
+    led = tmp_path / "l.csv"
+    led.write_text(",".join(LEDGER_FIELDS), encoding="utf-8")   # hand-edited: no newline at the end
+    record_attempt(led, _row("k1"))
+    rows = read_ledger(led)
+    assert len(rows) == 1 and rows[0]["candidate_key"] == "k1"
+
+
 def test_dev_rows_do_not_count(tmp_path):
     led = tmp_path / "l.csv"
     record_attempt(led, {**_row("k1"), "split": "dev"})
@@ -89,22 +97,36 @@ def test_finish_attempt_sets_the_status_of_that_eval_only(tmp_path):
 
 @pytest.fixture
 def bench(tmp_path, monkeypatch):
-    """A config, a dev and a test question file, GGUF files for the candidate and the referee,
-    a clean git tree at a fixed commit, and a fake run_eval that records what it was given."""
+    """A repo (tmp_path/repo, standing in for REPO_ROOT) with the bench spec and the ledger committed,
+    a dev and a test question file, GGUF files for the candidate and the referee, a fake git (clean
+    tree at a fixed commit), and a fake run_eval that records what it was given."""
+    repo = tmp_path / "repo"
+    (repo / "evals").mkdir(parents=True)
+    (repo / "results").mkdir()
+    monkeypatch.setattr(cli, "REPO_ROOT", repo)
     runs = tmp_path / "runs"
     config = tmp_path / "assistant.toml"
     config.write_text(CONFIG.format(runs=runs.as_posix()), encoding="utf-8")
     for name in ("dev_a", "dev_b", "test"):
-        (tmp_path / f"{name}.toml").write_text(f'[[question]]\nid = "{name}"\ntext = "q"\npublic = true\n',
-                                               encoding="utf-8")
+        (repo / "evals" / f"{name}.toml").write_text(f'[[question]]\nid = "{name}"\ntext = "q"\npublic = true\n',
+                                                     encoding="utf-8")
     gemma, referee = tmp_path / "gemma.gguf", tmp_path / "referee.gguf"
     gemma.write_bytes(b"GGUF gemma")
     referee.write_bytes(b"GGUF referee")
     monkeypatch.setenv("GEMMA_GGUF", str(gemma))
     monkeypatch.setenv("REFEREE_GGUF", str(referee))
-    monkeypatch.setattr(cli, "_git", lambda *args: "" if args[0] == "status" else "c0ffee1234567890")
-    calls, ledger = [], tmp_path / "ledger.csv"
-    state = {"rows": [{"outcome": "ok", "gate": "pass"}]}
+    ledger = repo / "results" / "bench_ledger.csv"
+    state = {"rows": [{"outcome": "ok", "gate": "pass"}], "porcelain": "",
+             "tracked": {"evals/bench.toml", "results/bench_ledger.csv"}}
+
+    def fake_git(*args):
+        if args[0] == "status":
+            return state["porcelain"]
+        if args[0] == "ls-files":   # --error-unmatch: prints the path when tracked, else fails ("")
+            return args[-1] if args[-1] in state["tracked"] else ""
+        return "c0ffee1234567890"
+    monkeypatch.setattr(cli, "_git", fake_git)
+    calls = []
 
     def fake_run_eval(settings, questions, modes, **kwargs):
         out = runs / f"eval-{kwargs.get('eval_id') or 'x'}"
@@ -117,24 +139,24 @@ def bench(tmp_path, monkeypatch):
         return out, state["rows"]
     monkeypatch.setattr(cli, "run_eval", fake_run_eval)
 
-    def spec(frozen: bool = True, test_files=("test",)):
+    def spec(frozen: bool, test_files, path: Path):
         text = SPEC.read_text(encoding="utf-8")
-        dev = ", ".join(f'"{(tmp_path / n).as_posix()}.toml"' for n in ("dev_a", "dev_b"))
-        test = ", ".join(f'"{(tmp_path / n).as_posix()}.toml"' for n in test_files)
+        dev = ", ".join(f'"{(repo / "evals" / n).as_posix()}.toml"' for n in ("dev_a", "dev_b"))
+        test = ", ".join(f'"{(repo / "evals" / n).as_posix()}.toml"' for n in test_files)
         text = text.replace('dev = ["evals/research_questions.toml", "evals/heldout_questions.toml"]',
                             f"dev = [{dev}]")
         text = text.replace('test = ["evals/bench_test_questions.toml"]', f"test = [{test}]")
         if frozen:
             text = text.replace("frozen = false", "frozen = true")
             text = text.replace('sha256 = ""', f'sha256 = "{sha256_file(referee)}"')
-        path = tmp_path / "bench.toml"
         path.write_text(text, encoding="utf-8")
         return path
 
-    def go(*argv, frozen: bool = True, test_files=("test",)):
-        return cli.main(["--config", str(config), "eval", "--bench", str(spec(frozen, test_files)),
-                         "--ledger", str(ledger), *argv])
-    go.calls, go.ledger, go.state, go.gemma = calls, ledger, state, gemma
+    def go(*argv, frozen: bool = True, test_files=("test",), ledger_path=None, spec_path=None):
+        path = spec(frozen, test_files, spec_path or repo / "evals" / "bench.toml")
+        return cli.main(["--config", str(config), "eval", "--bench", str(path),
+                         "--ledger", str(ledger_path or ledger), *argv])
+    go.calls, go.ledger, go.state, go.gemma, go.repo, go.tmp = calls, ledger, state, gemma, repo, tmp_path
     return go
 
 
@@ -148,6 +170,17 @@ def test_dev_split_writes_no_ledger_row(bench, monkeypatch):
     assert call["bench"]["version"] == 1 and call["bench"]["split"] == "dev"
     assert call["bench"]["candidate"] == "gemma-e4b" and call["bench"]["candidate_gguf_sha256"] == ""
     assert call["bench"]["candidate_key"].startswith("-c0ffee123-")
+    assert call["bench"]["tree_clean"] is True and call["bench"]["ledger"] is None
+    assert call["bench"]["question_files"] == {
+        f"evals/{n}.toml": sha256_file(bench.repo / "evals" / f"{n}.toml") for n in ("dev_a", "dev_b")}
+    assert call["bench"]["spec"] == {"path": "evals/bench.toml",
+                                     "sha256": sha256_file(bench.repo / "evals" / "bench.toml")}
+
+
+def test_dev_split_records_a_dirty_tree_without_refusing(bench):
+    bench.state["porcelain"] = " M assistant/verify.py"
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
+    assert bench.calls[0]["bench"]["tree_clean"] is False
 
 
 def test_dev_split_runs_unfrozen_with_a_hybrid_reference_row(bench):
@@ -171,6 +204,66 @@ def test_test_split_records_the_attempt_before_the_first_question(bench):
     assert started["candidate"] == "gemma-e4b" and started["candidate_key"] == call["bench"]["candidate_key"]
     assert started["eval_id"] == f"eval-{call['eval_id']}" and call["questions"] == ["test"]
     assert [r["status"] for r in read_ledger(bench.ledger)] == ["started"]   # the referee sets passed or missed
+    assert call["bench"]["tree_clean"] is True and call["bench"]["ledger"] == "results/bench_ledger.csv"
+    assert call["bench"]["question_files"] == {"evals/test.toml": sha256_file(bench.repo / "evals" / "test.toml")}
+
+
+def test_a_changed_ledger_alone_does_not_count_as_a_dirty_tree(bench, capsys):
+    """After one attempt the ledger is modified; the next candidate may still run."""
+    bench.state["porcelain"] = " M results/bench_ledger.csv"
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 0
+    assert bench.calls[0]["bench"]["tree_clean"] is True
+    bench.state["porcelain"] = " M results/bench_ledger.csv\n M assistant/verify.py"
+    capsys.readouterr()
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    out = capsys.readouterr().out
+    assert "assistant/verify.py" in out and "results/bench_ledger.csv" not in out   # dirty, before the retest check
+
+
+def test_test_split_refuses_a_ledger_outside_the_repo(bench, capsys):
+    outside = bench.tmp / "elsewhere.csv"
+    assert bench("--candidate", "gemma-e4b", "--split", "test", ledger_path=outside) == 2
+    assert "git-tracked" in capsys.readouterr().out and not bench.calls and not outside.exists()
+
+
+def test_test_split_refuses_an_untracked_ledger_in_the_repo(bench, capsys):
+    bench.state["tracked"].discard("results/bench_ledger.csv")
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    assert "ledger" in capsys.readouterr().out and not bench.calls
+
+
+def test_test_split_refuses_an_untracked_copy_of_the_spec(bench, capsys):
+    copy = bench.repo / "evals" / "bench_copy.toml"
+    assert bench("--candidate", "gemma-e4b", "--split", "test", spec_path=copy) == 2
+    assert "bench_copy.toml" in capsys.readouterr().out and not bench.calls
+
+
+def test_test_split_refuses_a_modified_spec(bench, capsys):
+    bench.state["porcelain"] = " M evals/bench.toml"
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    assert "evals/bench.toml has uncommitted changes" in capsys.readouterr().out and not bench.calls
+
+
+@pytest.mark.parametrize("flag", [["--no-tavily"], ["--replay-search", "snap"], ["--only", "test"],
+                                  ["--verify-tier", "local"]])
+def test_test_split_refuses_flags_that_change_the_run(bench, capsys, flag):
+    assert bench("--candidate", "gemma-e4b", "--split", "test", *flag) == 2
+    assert flag[0] in capsys.readouterr().out and not bench.calls
+
+
+def test_referee_pin_is_checked_before_the_candidate_gguf_is_hashed(bench, monkeypatch):
+    hashed = []
+    monkeypatch.setattr(cli, "sha256_file", lambda path: hashed.append(Path(path).name) or "0" * 64)
+    monkeypatch.delenv("REFEREE_GGUF")
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    assert "gemma.gguf" not in hashed
+
+
+def test_dirty_paths_reads_porcelain_output():
+    # _git strips its output, so the first line may have lost its leading space
+    out = "M assistant/verify.py\nM  results/bench_ledger.csv\nR  old name.toml -> evals/new name.toml\n?? x"
+    assert cli._dirty_paths(out) == ["assistant/verify.py", "results/bench_ledger.csv", "evals/new name.toml", "x"]
+    assert cli._dirty_paths("") == []
 
 
 def test_a_test_run_with_a_failed_row_is_marked_error(bench):
@@ -194,12 +287,12 @@ def test_the_same_candidate_never_runs_the_test_split_twice(bench, capsys):
 
 
 @pytest.mark.parametrize("change, needle", [
-    ("dirty", "uncommitted"), ("no_gguf", "GEMMA_GGUF"), ("missing_gguf", "does not exist"),
+    ("dirty", "assistant/verify.py"), ("no_gguf", "GEMMA_GGUF"), ("missing_gguf", "does not exist"),
     ("bad_referee", "referee"), ("missing_questions", "nope.toml")])
 def test_test_split_refusals(bench, monkeypatch, capsys, change, needle):
     test_files = ("test",)
     if change == "dirty":
-        monkeypatch.setattr(cli, "_git", lambda *args: " M assistant/verify.py" if args[0] == "status" else "c0ffee1")
+        bench.state["porcelain"] = " M assistant/verify.py"
     elif change == "no_gguf":
         monkeypatch.delenv("GEMMA_GGUF")
     elif change == "missing_gguf":

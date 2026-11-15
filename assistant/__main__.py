@@ -58,7 +58,7 @@ from .search import SearchError, search
 from .repair import RepairError, repair_run
 from .bench_spec import BenchSpecError, candidate_key, check_referee_pin, load_bench
 from .ledger import RetestLimit, check_attempt, finish_attempt, record_attempt
-from .manifest import _git, sha256_file
+from .manifest import REPO_ROOT, _git, sha256_file
 from .referee import score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
@@ -349,11 +349,30 @@ def _eval_result(out_dir: Path, rows: list[dict]) -> int:
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
 
 
+def _dirty_paths(porcelain: str) -> list[str]:
+    """The repo-relative paths in `git status --porcelain` output ("XY path", or "XY old -> new"
+    for a rename). _git strips its output, so the first line may have lost its leading space."""
+    paths = []
+    for line in porcelain.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            paths.append(parts[1].split(" -> ")[-1].strip('"'))
+    return paths
+
+
+def _repo_path(path: Path) -> str | None:
+    """`path` relative to the repo root, as git names it, or None when it is outside the repo."""
+    try:
+        return Path(path).resolve().relative_to(Path(REPO_ROOT).resolve()).as_posix()
+    except ValueError:
+        return None
+
+
 def _bench_plan(settings, args) -> dict:
     """Everything a bench run needs, or BenchRefused. The spec sets the questions, runs and Tavily
-    setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen
-    spec, a clean tree at a commit (the candidate key names it), the candidate's GGUF, the pinned
-    referee, and room under the retest cap."""
+    setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen,
+    committed spec, the committed ledger, a clean tree at a commit (the candidate key names it), the
+    candidate's GGUF, the pinned referee, and room under the retest cap. Cheap checks run first."""
     for flag, value in (("--questions", args.questions), ("--runs", args.runs)):
         if value is not None:
             raise BenchRefused(f"{flag} comes from the bench spec; leave it out with --bench")
@@ -374,9 +393,13 @@ def _bench_plan(settings, args) -> dict:
         raise BenchRefused(f"the spec's search {spec.search!r} is not the local mode's {MODES['local'][1]!r}")
     split = args.split or "dev"
     test = split == "test"
-    if test and (args.only or args.verify_tier):
-        raise BenchRefused("the test split runs the whole spec with the candidate as checker: "
-                           "leave out --only and --verify-tier")
+    if test:
+        changed = [flag for flag, value in (("--only", args.only), ("--verify-tier", args.verify_tier),
+                                            ("--no-tavily", args.no_tavily), ("--replay-search", args.replay_search))
+                   if value]
+        if changed:
+            raise BenchRefused("the test split runs the whole spec as written, with the candidate as checker: "
+                               f"leave out {', '.join(changed)}")
     if test and not spec.frozen:
         raise BenchRefused(f"the test split needs a frozen bench spec (frozen = true in {args.bench}); "
                            "use --split dev until then")
@@ -387,26 +410,47 @@ def _bench_plan(settings, args) -> dict:
     questions = [q for f in files for q in load_questions(f)]
     if args.only:
         questions = [q for q in questions if q.id in args.only]
+    ledger, spec_path = Path(args.ledger), Path(args.bench)
+    ledger_rel, spec_rel = _repo_path(ledger), _repo_path(spec_path)
     commit = _git("rev-parse", "HEAD")
-    if test and not commit:
-        raise BenchRefused("the test split needs a git commit to name in the candidate key")
-    if test and _git("status", "--porcelain", "--untracked-files=no"):
-        raise BenchRefused("the git tree has uncommitted changes; commit them first (the candidate key names "
-                           f"the commit), including {args.ledger} after an earlier attempt")
-    gguf, gguf_sha = os.environ.get(ref.gguf_env, ""), ""
-    if gguf and Path(gguf).is_file():
-        gguf_sha = sha256_file(Path(gguf))
-    elif test:
-        raise BenchRefused(f"candidate GGUF: environment variable {ref.gguf_env} is not set" if not gguf else
-                           f"candidate GGUF: file from {ref.gguf_env} does not exist: {gguf}")
-    key = candidate_key(gguf_sha, commit, tier)
+    # the ledger is the one file a test run is expected to leave changed; it doesn't touch the pipeline
+    dirty = [p for p in _dirty_paths(_git("status", "--porcelain", "--untracked-files=no"))
+             if (Path(REPO_ROOT) / p).resolve() != ledger.resolve()]
+    if test:
+        if not commit:
+            raise BenchRefused("the test split needs a git commit to name in the candidate key")
+        if ledger_rel is None or not _git("ls-files", "--error-unmatch", ledger_rel):
+            raise BenchRefused(f"the test split records attempts in the committed ledger; {ledger} is not a "
+                               "git-tracked file in this repo (default: results/bench_ledger.csv)")
+        if spec_rel is None or not _git("ls-files", "--error-unmatch", spec_rel):
+            raise BenchRefused(f"the test split needs the committed bench spec; {spec_path} is not git-tracked "
+                               "in this repo")
+        if spec_rel in dirty:
+            raise BenchRefused(f"the bench spec {spec_rel} has uncommitted changes; a frozen spec changes only "
+                               "as a new bench version, committed")
+        if dirty:
+            raise BenchRefused("the git tree has uncommitted changes (" + ", ".join(dirty[:5]) +
+                               "); commit them first: the candidate key names the commit")
+    gguf = os.environ.get(ref.gguf_env, "")
+    if test and not gguf:
+        raise BenchRefused(f"candidate GGUF: environment variable {ref.gguf_env} is not set")
+    if test and not Path(gguf).is_file():
+        raise BenchRefused(f"candidate GGUF: file from {ref.gguf_env} does not exist: {gguf}")
     if test:
         check_referee_pin(spec, os.environ)
-        check_attempt(Path(args.ledger), spec.version, gguf_sha, key)
+    gguf_sha = sha256_file(Path(gguf)) if gguf and Path(gguf).is_file() else ""
+    key = candidate_key(gguf_sha, commit, tier)
+    if test:
+        check_attempt(ledger, spec.version, gguf_sha, key)
     modes = ["local"] + (["hybrid"] if "hybrid" in (args.mode or []) else [])
+    named = lambda path: _repo_path(Path(path)) or Path(path).as_posix()
+    bench = {"version": spec.version, "split": split, "candidate": args.candidate, "candidate_key": key,
+             "candidate_gguf_sha256": gguf_sha, "tree_clean": bool(commit) and not dirty,
+             "question_files": {named(f): sha256_file(Path(f)) for f in files},
+             "spec": {"path": named(spec_path), "sha256": sha256_file(spec_path)},
+             "ledger": ledger_rel if test else None}
     return {"spec": spec, "tier": ref.tier, "questions": questions, "modes": modes, "test": test,
-            "commit": commit, "bench": {"version": spec.version, "split": split, "candidate": args.candidate,
-                                        "candidate_key": key, "candidate_gguf_sha256": gguf_sha}}
+            "commit": commit, "bench": bench}
 
 
 def _bench_eval(settings, args, plan: dict) -> int:
