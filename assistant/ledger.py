@@ -13,6 +13,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
+DEFAULT_LEDGER = "results/bench_ledger.csv"   # repo-relative; the only ledger the test split accepts
 LEDGER_FIELDS = ("bench_version", "candidate", "candidate_key", "gguf_sha256", "git_commit", "split",
                  "eval_id", "status", "started_utc", "note")
 MAX_TEST_ATTEMPTS = 3

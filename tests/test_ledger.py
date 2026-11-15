@@ -116,14 +116,21 @@ def bench(tmp_path, monkeypatch):
     monkeypatch.setenv("GEMMA_GGUF", str(gemma))
     monkeypatch.setenv("REFEREE_GGUF", str(referee))
     ledger = repo / "results" / "bench_ledger.csv"
+    header = ",".join(LEDGER_FIELDS) + "\n"
+    ledger.write_text(header, encoding="utf-8")   # as committed: the header only
     state = {"rows": [{"outcome": "ok", "gate": "pass"}], "porcelain": "",
-             "tracked": {"evals/bench.toml", "results/bench_ledger.csv"}}
+             "tracked": {"evals/bench.toml", "results/bench_ledger.csv"},
+             "head": {"evals/bench.toml": "", "results/bench_ledger.csv": header}}   # files in HEAD
 
     def fake_git(*args):
         if args[0] == "status":
             return state["porcelain"]
         if args[0] == "ls-files":   # --error-unmatch: prints the path when tracked, else fails ("")
             return args[-1] if args[-1] in state["tracked"] else ""
+        if args[0] == "rev-parse" and args[-1].startswith("HEAD:"):   # the blob id, or "" when not in HEAD
+            return "b10b" if args[-1][5:] in state["head"] else ""
+        if args[0] == "show":   # like _git, the output comes back stripped
+            return state["head"].get(args[-1][5:], "").strip()
         return "c0ffee1234567890"
     monkeypatch.setattr(cli, "_git", fake_git)
     calls = []
@@ -157,13 +164,14 @@ def bench(tmp_path, monkeypatch):
         return cli.main(["--config", str(config), "eval", "--bench", str(path),
                          "--ledger", str(ledger_path or ledger), *argv])
     go.calls, go.ledger, go.state, go.gemma, go.repo, go.tmp = calls, ledger, state, gemma, repo, tmp_path
+    go.header = header
     return go
 
 
 def test_dev_split_writes_no_ledger_row(bench, monkeypatch):
     monkeypatch.delenv("GEMMA_GGUF")   # dev runs without the GGUF; its sha is then ""
     assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
-    assert not bench.ledger.exists()
+    assert bench.ledger.read_text(encoding="utf-8") == bench.header
     (call,) = bench.calls
     assert call["questions"] == ["dev_a", "dev_b"] and call["modes"] == ["local"] and call["runs"] == 1
     assert call["candidate_tier"] == "local" and call["settings"].research.tavily_fallback is False
@@ -192,7 +200,7 @@ def test_dev_split_runs_unfrozen_with_a_hybrid_reference_row(bench):
 def test_test_split_refused_when_not_frozen(bench, capsys):
     assert bench("--candidate", "gemma-e4b", "--split", "test", frozen=False) == 2
     assert "frozen" in capsys.readouterr().out
-    assert not bench.calls and not bench.ledger.exists()
+    assert not bench.calls and read_ledger(bench.ledger) == []
 
 
 def test_test_split_records_the_attempt_before_the_first_question(bench):
@@ -223,13 +231,50 @@ def test_a_changed_ledger_alone_does_not_count_as_a_dirty_tree(bench, capsys):
 def test_test_split_refuses_a_ledger_outside_the_repo(bench, capsys):
     outside = bench.tmp / "elsewhere.csv"
     assert bench("--candidate", "gemma-e4b", "--split", "test", ledger_path=outside) == 2
-    assert "git-tracked" in capsys.readouterr().out and not bench.calls and not outside.exists()
+    assert "results/bench_ledger.csv" in capsys.readouterr().out and not bench.calls and not outside.exists()
+
+
+def test_test_split_refuses_a_ledger_other_than_the_default(bench, capsys):
+    """One ledger per repo: a second ledger file would reset the count."""
+    other = bench.repo / "results" / "other_ledger.csv"
+    other.write_text(bench.header, encoding="utf-8")
+    bench.state["tracked"].add("results/other_ledger.csv")
+    bench.state["head"]["results/other_ledger.csv"] = bench.header
+    assert bench("--candidate", "gemma-e4b", "--split", "test", ledger_path=other) == 2
+    assert "results/bench_ledger.csv" in capsys.readouterr().out and not bench.calls
+    assert bench("--candidate", "gemma-e4b", "--split", "dev", ledger_path=other) == 0   # dev ignores the ledger
+
+
+def test_test_split_refuses_a_ledger_staged_but_not_committed(bench, capsys):
+    del bench.state["head"]["results/bench_ledger.csv"]
+    bench.state["porcelain"] = "A  results/bench_ledger.csv"
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    assert "HEAD" in capsys.readouterr().out and not bench.calls and read_ledger(bench.ledger) == []
+
+
+def test_test_split_refuses_a_ledger_that_lost_committed_rows(bench, capsys):
+    committed = bench.header + "1,gemma-e4b,k-old,g,abc,test,eval-old,missed,2026-11-15T00:00:00+00:00,\n"
+    bench.state["head"]["results/bench_ledger.csv"] = committed
+    bench.state["porcelain"] = " M results/bench_ledger.csv"
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2   # the working file holds the header only
+    assert "committed" in capsys.readouterr().out and not bench.calls
+    bench.ledger.write_text(committed.replace(",missed,", ",passed,"), encoding="utf-8")   # a row edited
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    bench.ledger.write_text(committed, encoding="utf-8")
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 0
+    assert [r["eval_id"] for r in read_ledger(bench.ledger)][0] == "eval-old"
+
+
+def test_a_crlf_checkout_of_the_committed_ledger_is_accepted(bench):
+    """Windows checkouts may turn "\n" into "\r\n"; the rows are still the committed ones."""
+    bench.ledger.write_bytes(bench.header.replace("\n", "\r\n").encode("utf-8"))
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 0
 
 
 def test_test_split_refuses_an_untracked_ledger_in_the_repo(bench, capsys):
     bench.state["tracked"].discard("results/bench_ledger.csv")
     assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
-    assert "ledger" in capsys.readouterr().out and not bench.calls
+    assert "results/bench_ledger.csv is not committed" in capsys.readouterr().out and not bench.calls
 
 
 def test_test_split_refuses_an_untracked_copy_of_the_spec(bench, capsys):
@@ -303,7 +348,7 @@ def test_test_split_refusals(bench, monkeypatch, capsys, change, needle):
         test_files = ("test", "nope")
     assert bench("--candidate", "gemma-e4b", "--split", "test", test_files=test_files) == 2
     assert needle in capsys.readouterr().out
-    assert not bench.calls and not bench.ledger.exists()
+    assert not bench.calls and read_ledger(bench.ledger) == []
 
 
 @pytest.mark.parametrize("argv, needle", [

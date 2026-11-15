@@ -40,7 +40,7 @@ import argparse
 import os
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import httpx
 
@@ -57,7 +57,7 @@ from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
 from .bench_spec import BenchSpecError, candidate_key, check_referee_pin, load_bench
-from .ledger import RetestLimit, check_attempt, finish_attempt, record_attempt
+from .ledger import DEFAULT_LEDGER, RetestLimit, check_attempt, finish_attempt, record_attempt
 from .manifest import REPO_ROOT, _git, sha256_file
 from .referee import score_eval
 from .verify import CAVEAT, failures, verify_run
@@ -368,6 +368,22 @@ def _repo_path(path: Path) -> str | None:
         return None
 
 
+def _check_ledger_committed(ledger: Path, ledger_rel: str | None) -> None:
+    """The test split counts attempts in one ledger per repo, results/bench_ledger.csv, as committed:
+    tracked, in HEAD, and with every committed row still there (new rows may follow). Otherwise a
+    second ledger, an uncommitted one, or a locally truncated one would reset the retest cap."""
+    if ledger_rel is None or PurePosixPath(ledger_rel) != PurePosixPath(DEFAULT_LEDGER):
+        raise BenchRefused(f"the test split records attempts only in this repo's {DEFAULT_LEDGER}, not {ledger}")
+    if not _git("ls-files", "--error-unmatch", ledger_rel) or not _git("rev-parse", "--verify", "--quiet",
+                                                                        f"HEAD:{ledger_rel}"):
+        raise BenchRefused(f"{ledger_rel} is not committed (git-tracked and in HEAD); commit it first")
+    committed = _git("show", f"HEAD:{ledger_rel}").replace("\r\n", "\n")   # _git strips the final newline
+    current = ledger.read_text(encoding="utf-8").replace("\r\n", "\n") if ledger.is_file() else ""
+    if committed and not (current.rstrip("\n") == committed or current.startswith(committed + "\n")):
+        raise BenchRefused(f"{ledger_rel} no longer starts with its committed rows; restore them "
+                           f"(git checkout HEAD -- {ledger_rel}) and add new attempts only after them")
+
+
 def _bench_plan(settings, args) -> dict:
     """Everything a bench run needs, or BenchRefused. The spec sets the questions, runs and Tavily
     setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen,
@@ -419,9 +435,7 @@ def _bench_plan(settings, args) -> dict:
     if test:
         if not commit:
             raise BenchRefused("the test split needs a git commit to name in the candidate key")
-        if ledger_rel is None or not _git("ls-files", "--error-unmatch", ledger_rel):
-            raise BenchRefused(f"the test split records attempts in the committed ledger; {ledger} is not a "
-                               "git-tracked file in this repo (default: results/bench_ledger.csv)")
+        _check_ledger_committed(ledger, ledger_rel)
         if spec_rel is None or not _git("ls-files", "--error-unmatch", spec_rel):
             raise BenchRefused(f"the test split needs the committed bench spec; {spec_path} is not git-tracked "
                                "in this repo")
@@ -699,7 +713,7 @@ def main(argv: list[str] | None = None) -> int:
     evaluate.add_argument("--candidate", default=None, help="with --bench: a name from the spec's [candidates]")
     evaluate.add_argument("--split", choices=("dev", "test"), default=None,
                           help="with --bench: dev (default; free, not logged) or test (frozen spec, capped, logged)")
-    evaluate.add_argument("--ledger", default="results/bench_ledger.csv",
+    evaluate.add_argument("--ledger", default=DEFAULT_LEDGER,
                           help="with --bench: the committed record of test-split attempts")
     again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
