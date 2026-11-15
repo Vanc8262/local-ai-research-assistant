@@ -33,6 +33,8 @@ tier = "referee"
 gguf_env = "REFEREE_GGUF"
 sha256 = ""
 prompt_version = 1
+prompt_hash = ""          # assistant.referee.PROMPT_HASH; required once frozen = true
+max_referee_failed = 0.02 # a card is refused when the referee could not judge more of its statements
 min_supported_recall = 0.90
 min_not_supported_recall = 0.85
 

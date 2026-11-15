@@ -71,6 +71,13 @@ def read_ledger(ledger: Path) -> list[dict]:
         return list(csv.DictReader(handle))
 
 
+def committed_eval_ids(committed_ledger: str | None) -> set[str]:
+    """The eval ids in the ledger's text as committed at HEAD (git show HEAD:results/bench_ledger.csv)."""
+    if not committed_ledger:
+        return set()
+    return {r.get("eval_id", "") for r in csv.DictReader(io.StringIO(committed_ledger))}
+
+
 def _test_rows(ledger: Path, version: int) -> list[dict]:
     return [r for r in read_ledger(ledger) if r.get("split") == "test" and r.get("bench_version") == str(version)]
 

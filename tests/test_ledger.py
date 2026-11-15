@@ -1,5 +1,6 @@
 """The bench attempt ledger, the retest cap, and `eval --bench/--candidate/--split`."""
 import csv
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from assistant import ledger as ledger_module
 from assistant.ledger import (FINAL_STATUSES, LEDGER_FIELDS, MAX_TEST_ATTEMPTS, AttemptFinal, RetestLimit,
                               check_attempt, finish_attempt, finish_attempts, read_ledger, record_attempt)
 from assistant.manifest import sha256_file
+from assistant.referee import PROMPT_HASH, PROMPT_VERSION
 
 ROOT = Path(__file__).resolve().parent.parent
 SPEC = ROOT / "evals" / "bench_v1.toml"
@@ -146,6 +148,15 @@ def bench(tmp_path, monkeypatch):
             raise state["rows"]
         return out, state["rows"]
     monkeypatch.setattr(cli, "run_eval", fake_run_eval)
+    state["served"] = None   # what llama-swap reports serving: None means the file GEMMA_GGUF names
+    state["served_calls"] = []
+
+    def fake_served(base_url, model):
+        state["served_calls"].append((base_url, model))
+        if isinstance(state["served"], Exception):
+            raise state["served"]
+        return state["served"] or os.environ.get("GEMMA_GGUF", "")
+    monkeypatch.setattr(cli, "served_model_path", fake_served)
 
     def spec(frozen: bool, test_files, path: Path):
         text = SPEC.read_text(encoding="utf-8")
@@ -157,6 +168,7 @@ def bench(tmp_path, monkeypatch):
         if frozen:
             text = text.replace("frozen = false", "frozen = true")
             text = text.replace('sha256 = ""', f'sha256 = "{sha256_file(referee)}"')
+            text = text.replace('prompt_hash = ""', f'prompt_hash = "{PROMPT_HASH}"')
         path.write_text(text, encoding="utf-8")
         return path
 
@@ -513,3 +525,47 @@ def test_eval_never_masks_its_own_exception_with_a_ledger_error(bench, monkeypat
     with pytest.raises(RuntimeError, match="model server died"):
         bench("--candidate", "gemma-e4b", "--split", "test")
     assert "Close results/bench_ledger.csv (e.g. in Excel) and run:" in capsys.readouterr().out
+
+
+def test_bench_manifest_records_the_referee_prompt(bench):
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
+    recorded = bench.calls[0]["bench"]
+    assert recorded["referee_prompt_version"] == PROMPT_VERSION and recorded["referee_prompt_hash"] == PROMPT_HASH
+
+
+def test_test_split_refuses_another_referee_prompt(bench, monkeypatch, capsys):
+    monkeypatch.setattr(cli, "PROMPT_HASH", "f" * 64)   # this code's prompt changed after the freeze
+    monkeypatch.setattr("assistant.referee.PROMPT_HASH", "f" * 64)
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    out = capsys.readouterr().out
+    assert "f" * 64 in out and PROMPT_HASH in out and not bench.calls and read_ledger(bench.ledger) == []
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0   # dev doesn't judge: no check
+
+
+def test_test_split_checks_the_served_candidate_file(bench, capsys):
+    other = bench.tmp / "other.gguf"
+    other.write_bytes(b"GGUF other")
+    bench.state["served"] = str(other)
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    out = capsys.readouterr().out
+    assert "other.gguf" in out and "gemma.gguf" in out and not bench.calls and read_ledger(bench.ledger) == []
+    assert bench.state["served_calls"] == [("http://127.0.0.1:1234/v1", "gemma")]
+
+
+def test_test_split_fails_closed_when_the_served_file_is_unknown(bench, capsys):
+    from assistant.bench_spec import BenchSpecError
+    bench.state["served"] = BenchSpecError("could not read the served model file: ConnectError: refused")
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 2
+    assert "refused" in capsys.readouterr().out and not bench.calls and read_ledger(bench.ledger) == []
+
+
+def test_dev_split_only_warns_about_the_served_file(bench, capsys):
+    from assistant.bench_spec import BenchSpecError
+    bench.state["served"] = BenchSpecError("could not read the served model file: ConnectError: refused")
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
+    assert "Warning" in capsys.readouterr().out and len(bench.calls) == 1
+    other = bench.tmp / "other.gguf"
+    other.write_bytes(b"GGUF other")
+    bench.state["served"] = str(other)
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
+    assert "other.gguf" in capsys.readouterr().out and len(bench.calls) == 2

@@ -63,11 +63,12 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
-from .bench_spec import REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, load_bench
+from .bench_spec import (REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, check_served_model,
+                         load_bench, served_model_path)
 from .ledger import (DEFAULT_LEDGER, AttemptFinal, RetestLimit, check_attempt, finish_attempt, finish_attempts,
                      read_ledger, record_attempt)
 from .manifest import REPO_ROOT, _git, sha256_file
-from .referee import PROMPT_VERSION, score_eval
+from .referee import PROMPT_HASH, PROMPT_VERSION, check_prompt, score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
 
@@ -395,8 +396,10 @@ def _check_ledger_committed(ledger: Path, ledger_rel: str | None) -> None:
 def _bench_plan(settings, args) -> dict:
     """Everything a bench run needs, or BenchRefused. The spec sets the questions, runs and Tavily
     setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen,
-    committed spec, the committed ledger, a clean tree at a commit (the candidate key names it), the
-    candidate's GGUF, the pinned referee, and room under the retest cap. Cheap checks run first."""
+    committed spec whose referee prompt is this code's, the committed ledger, a clean tree at a commit
+    (the candidate key names it), the candidate's GGUF, the pinned referee, and room under the retest
+    cap; last, llama-swap must serve the candidate GGUF that was hashed (on dev a mismatch, or no
+    answer, is only a warning). Cheap checks run first."""
     for flag, value in (("--questions", args.questions), ("--runs", args.runs)):
         if value is not None:
             raise BenchRefused(f"{flag} comes from the bench spec; leave it out with --bench")
@@ -427,6 +430,8 @@ def _bench_plan(settings, args) -> dict:
     if test and not spec.frozen:
         raise BenchRefused(f"the test split needs a frozen bench spec (frozen = true in {args.bench}); "
                            "use --split dev until then")
+    if test:   # the referee will judge this attempt with the spec's prompt, so it must be this code's
+        check_prompt(spec)
     files = spec.questions.get(split) or []
     missing = [f for f in files if not Path(f).is_file()]
     if not files or missing:
@@ -464,12 +469,18 @@ def _bench_plan(settings, args) -> dict:
     key = candidate_key(gguf_sha, commit, tier)
     if test:
         check_attempt(ledger, spec.version, gguf_sha, key)
+    # the hash above is of the file the shell names; llama-swap must serve that file (test: or refuse)
+    warning = check_served_model(tier, gguf, f"candidate GGUF ({ref.gguf_env})", strict=test,
+                                 fetch=served_model_path)
+    if warning:
+        print(warning)
     modes = ["local"] + (["hybrid"] if "hybrid" in (args.mode or []) else [])
     named = lambda path: _repo_path(Path(path)) or Path(path).as_posix()
     bench = {"version": spec.version, "split": split, "candidate": args.candidate, "candidate_key": key,
              "candidate_gguf_sha256": gguf_sha, "tree_clean": bool(commit) and not dirty,
              "question_files": {named(f): sha256_file(Path(f)) for f in files},
              "spec": {"path": named(spec_path), "sha256": sha256_file(spec_path)},
+             "referee_prompt_version": PROMPT_VERSION, "referee_prompt_hash": PROMPT_HASH,
              "ledger": ledger_rel if test else None}
     return {"spec": spec, "tier": ref.tier, "questions": questions, "modes": modes, "test": test,
             "commit": commit, "bench": bench}
@@ -543,17 +554,27 @@ def cmd_rescore(settings, args) -> int:
     return 0 if rows else 1
 
 
+def _one_line(exc: BaseException) -> str:
+    return "; ".join(line.strip() for line in str(exc).splitlines() if line.strip()) or type(exc).__name__
+
+
 def cmd_referee(settings, args) -> int:
-    """Judge the finished eval's reports with the pinned referee (README: research bench)."""
+    """Judge the finished eval's reports with the pinned referee (README: research bench). A test-split
+    eval is judged only once its attempt is in the committed ledger at HEAD. Every refusal is one
+    line and exit code 1."""
     if args.words[0] == "calibrate":
         return cmd_calibrate(settings, args)
     eval_dir = Path(args.words[0])
+    if not (eval_dir / "summary.csv").is_file():
+        print(f"Referee refused: {eval_dir} is not a finished eval folder (no summary.csv)")
+        return 1
     log = RunLog(settings.runs_dir, task=f"referee {eval_dir.name}")
     gateway = Gateway(settings, log)
     try:
-        rows = score_eval(eval_dir, load_bench(args.bench), settings, gateway)
-    except BenchSpecError as exc:
-        print(f"Referee refused: {exc}")
+        rows = score_eval(eval_dir, load_bench(args.bench), settings, gateway,
+                          committed_ledger=_git("show", f"HEAD:{DEFAULT_LEDGER}") or None)
+    except (BenchSpecError, TierNotReady, PrivacyError, KeyError, OSError, ValueError, httpx.HTTPError) as exc:
+        print(f"Referee refused: {_one_line(exc)}")
         return 1
     finally:
         gateway.close()
@@ -561,7 +582,13 @@ def cmd_referee(settings, args) -> int:
     print(f"Saved: {eval_dir / 'referee.csv'}")
     incomplete = [r for r in rows if not r.get("complete")]
     if incomplete:
-        print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some referee judgements failed.")
+        print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some judgements failed on a transient "
+              "error (connection, timeout, server busy); run the same command again to judge them.")
+    failed = sum(int(r.get("referee_failed") or 0) for r in rows)
+    if failed:
+        total = sum(int(r.get("statements") or 0) for r in rows)
+        print(f"The referee could not judge {failed} of {total} statements (counted as unclear); the "
+              "scorecard shows the share and refuses a card above [referee] max_referee_failed.")
     return 0 if rows and not incomplete else 1
 
 
@@ -626,7 +653,7 @@ def cmd_scorecard(settings, args) -> int:
 
 
 def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool, sha: str = "") -> None:
-    """results/calibration_v1_<tier>.md: both recalls with intervals, the verdict, and what pins them."""
+    """results/calibration_v<version>_<tier>.md: both recalls with intervals, the verdict, and what pins them."""
     lines = [f"# Referee calibration: {tier}", "", f"**{'PASS' if passed else 'FAIL'}**", ""]
     for label, minimum in (("supported", spec.referee.min_supported_recall),
                            ("not_supported", spec.referee.min_not_supported_recall)):
@@ -637,7 +664,7 @@ def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool,
                      f"({'pass' if total and hits / total >= minimum else 'fail'})")
     lines += [f"- labelled unclear (excluded): {result['unclear_labels']}",
               f"- judgements that failed (gateway or reply errors, counted as misses): {result.get('referee_errors', 0)}",
-              f"- prompt version: {PROMPT_VERSION}"]
+              f"- prompt version: {PROMPT_VERSION}", f"- prompt hash: {PROMPT_HASH}"]
     if sha:
         lines.append(f"- referee GGUF sha256: {sha}")
     lines += ["", REFEREE_CAVEAT]
@@ -646,26 +673,16 @@ def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool,
 
 
 def cmd_calibrate(settings, args) -> int:
-    """referee calibrate sample|spot|agree|run (README: research bench)."""
+    """referee calibrate sample|spot|agree|run (README: research bench). The default files are in the
+    repo's results/, named after the bench version: calibration_v<version>.csv, ..._spot.csv, and the
+    report calibration_v<version>_<tier>.md that the scorecard reads. `run` first checks the prompt,
+    the referee pin and that llama-swap serves the pinned file."""
     action, rest = (args.words[1] if len(args.words) > 1 else ""), args.words[2:]
     if action not in ("sample", "spot", "agree", "run") or not rest:
         print("Usage: referee calibrate sample <eval dirs> | spot <csv> | agree <claude csv> <van csv> | run <csv>")
         return 2
+    results = Path(REPO_ROOT) / "results"
     try:
-        if action == "sample":
-            spec = load_bench(args.bench)
-            dev_ids = set()
-            for path in spec.questions.get("dev", []):
-                dev_ids |= {q.id for q in load_questions(path)}
-            out = Path(args.out or "results/calibration_v1.csv")
-            rows = calibration.sample_pairs([Path(p) for p in rest], out, dev_ids, runs_dir=settings.runs_dir)
-            print(f"Sampled {len(rows)} pairs into {out}. Fill `label` (supported, not_supported, unclear) and `labeller`.")
-            return 0 if rows else 1
-        if action == "spot":
-            out = Path(args.out or "results/calibration_v1_spot.csv")
-            rows = calibration.spot_check(Path(rest[0]), out)
-            print(f"Wrote {len(rows)} pairs with labels blanked to {out}, for Van to label.")
-            return 0 if rows else 1
         if action == "agree":
             if len(rest) != 2:
                 print("Name two CSVs: Claude's labels, then Van's")
@@ -674,22 +691,38 @@ def cmd_calibrate(settings, args) -> int:
             print(f"Van disagrees on {compared - agreeing} of {compared}")
             return 1 if compared - agreeing > 3 else 0
         spec = load_bench(args.bench)
+        if action == "sample":
+            dev_ids = set()
+            for path in spec.questions.get("dev", []):
+                path = Path(path) if Path(path).is_absolute() or Path(path).is_file() else Path(REPO_ROOT) / path
+                dev_ids |= {q.id for q in load_questions(path)}
+            out = Path(args.out) if args.out else results / f"calibration_v{spec.version}.csv"
+            rows = calibration.sample_pairs([Path(p) for p in rest], out, dev_ids, runs_dir=settings.runs_dir)
+            print(f"Sampled {len(rows)} pairs into {out}. Fill `label` (supported, not_supported, unclear) and `labeller`.")
+            return 0 if rows else 1
+        if action == "spot":
+            out = Path(args.out) if args.out else results / f"calibration_v{spec.version}_spot.csv"
+            rows = calibration.spot_check(Path(rest[0]), out)
+            print(f"Wrote {len(rows)} pairs with labels blanked to {out}, for Van to label.")
+            return 0 if rows else 1
         tier = args.tier or spec.referee.tier
+        check_prompt(spec)
         check_referee_pin(spec, os.environ)
         env_gguf = os.environ.get(spec.referee.gguf_env, "")
         sha = sha256_file(Path(env_gguf)) if env_gguf else ""   # before any judging, so a bad path costs nothing
+        check_served_model(settings.tier(tier), env_gguf, "referee GGUF", strict=True, fetch=served_model_path)
         log = RunLog(settings.runs_dir, task=f"referee calibrate {tier}")
         gateway = Gateway(settings, log)
         try:
             rows = calibration.judge_pairs(Path(rest[0]), settings.runs_dir, gateway, tier)
         finally:
             gateway.close()
-    except (BenchSpecError, ValueError, OSError) as exc:
-        print(f"Calibration refused: {exc}")
+    except (BenchSpecError, TierNotReady, PrivacyError, KeyError, ValueError, OSError, httpx.HTTPError) as exc:
+        print(f"Calibration refused: {_one_line(exc)}")
         return 1
     result = calibration.recall(rows)
     passed = calibration.meets(result, spec)
-    report = Path("results") / f"calibration_v1_{tier}.md"
+    report = results / f"calibration_v{spec.version}_{tier}.md"
     _calibration_report(report, tier, spec, result, passed, sha)
     for label in ("supported", "not_supported"):
         hits, total, interval = result[label]

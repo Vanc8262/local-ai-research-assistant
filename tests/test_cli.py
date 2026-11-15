@@ -187,6 +187,7 @@ def test_eval_exits_0_only_when_every_run_passes(run, monkeypatch, tmp_path, row
 def test_cli_referee_exit_codes(run, monkeypatch, tmp_path, rows, code):
     eval_dir = tmp_path / "runs" / "eval-1"
     eval_dir.mkdir()
+    (eval_dir / "summary.csv").write_text("question,run_id,outcome\n", encoding="utf-8")
     (eval_dir / "referee.md").write_text("# referee\n", encoding="utf-8")
     seen = {}
 
@@ -201,6 +202,7 @@ def test_cli_referee_exit_codes(run, monkeypatch, tmp_path, rows, code):
 def test_cli_referee_pin_error_exits_1(run, monkeypatch, tmp_path, capsys):
     eval_dir = tmp_path / "runs" / "eval-1"
     eval_dir.mkdir()
+    (eval_dir / "summary.csv").write_text("question,run_id,outcome\n", encoding="utf-8")
     monkeypatch.delenv("REFEREE_GGUF", raising=False)
     assert run(SUPPORTED, "referee", str(eval_dir), "--bench", "evals/bench_v1.toml") == 1
     assert "REFEREE_GGUF" in capsys.readouterr().out
@@ -226,13 +228,14 @@ def test_cli_calibrate_run_writes_report(run, monkeypatch, tmp_path, capsys):
     rows = ([{"label": "supported", "referee_verdict": "supported"}] * 19 + [{"label": "supported", "referee_verdict": "not_supported"}]
             + [{"label": "not_supported", "referee_verdict": "not_supported"}] * 9 + [{"label": "not_supported", "referee_verdict": "supported"}])
     monkeypatch.setattr(calibration, "judge_pairs", lambda *a, **k: rows)
-    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(cli, "REPO_ROOT", tmp_path)
     gguf = tmp_path / "ref.gguf"
     gguf.write_bytes(b"gguf")
     monkeypatch.setenv("REFEREE_GGUF", str(gguf))
+    monkeypatch.setattr(cli, "served_model_path", lambda base_url, model: str(gguf))
     bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
-    assert run(SUPPORTED, "referee", "calibrate", "run", "x.csv", "--bench", str(bench)) == 0
-    text = (tmp_path / "results" / "calibration_v1_referee.md").read_text(encoding="utf-8")
+    assert run(SUPPORTED, "referee", "calibrate", "run", "x.csv", "--bench", str(bench), "--tier", "local") == 0
+    text = (tmp_path / "results" / "calibration_v1_local.md").read_text(encoding="utf-8")   # the tier judged
     assert cli.sha256_file(gguf) in text and "judgements that failed" in text
     assert "PASS" in text and "95% interval" in text and "not that every sentence is true" in text
     assert "PASS" in capsys.readouterr().out
@@ -257,6 +260,7 @@ def test_cli_calibrate_run_bad_label_exits_1(run, monkeypatch, tmp_path, capsys)
     monkeypatch.setenv("REFEREE_GGUF", str(gguf))
     csv_path = tmp_path / "l.csv"
     csv_path.write_text("pair_id,run_id,statement,index,label\np007,r1,s,1,suported\n", encoding="utf-8")
+    monkeypatch.setattr(cli, "served_model_path", lambda base_url, model: str(gguf))
     bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
-    assert run(SUPPORTED, "referee", "calibrate", "run", str(csv_path), "--bench", str(bench)) == 1
+    assert run(SUPPORTED, "referee", "calibrate", "run", str(csv_path), "--bench", str(bench), "--tier", "local") == 1
     assert "p007" in capsys.readouterr().out

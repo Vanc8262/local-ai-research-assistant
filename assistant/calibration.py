@@ -132,7 +132,7 @@ def spot_check(labelled: Path, out: Path, n: int = 25, seed: int = 20261116) -> 
 
 
 def judge_pairs(labelled: Path, runs_dir: Path, gateway, tier: str) -> list[dict]:
-    """Add referee_verdict (and referee_error) to every pair labelled supported or not_supported,
+    """Add referee_verdict (and referee_error, referee_failed) to every pair labelled supported or not_supported,
     reading only the stored sources of its run folder. Blank and unclear labels never reach recall,
     so they are not judged. A label outside LABELS raises ValueError naming the pair_ids."""
     every = _read(labelled)
@@ -147,7 +147,9 @@ def judge_pairs(labelled: Path, runs_dir: Path, gateway, tier: str) -> list[dict
         source = cache[run_dir].get(row["index"])
         text = stored_source_text(run_dir, row["index"], source) if source is not None else ""
         judgement = judge(row["statement"], row["index"], source, text, gateway, tier)
-        row["referee_verdict"], row["referee_error"] = judgement.verdict, judgement.referee_error
+        row["referee_verdict"], row["referee_failed"] = judgement.verdict, judgement.referee_failed
+        # any failed judgement, transient or final, with what went wrong; recall counts it a miss
+        row["referee_error"] = judgement.referee_error or (judgement.reason if judgement.referee_failed else "")
     return rows
 
 
