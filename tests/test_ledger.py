@@ -384,3 +384,11 @@ def test_bench_eval_probes_the_candidate_tier_for_gpu_offload(bench, monkeypatch
     assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
     probe = bench.calls[0]["offload_probe"]
     assert probe() == (40, 49) and seen == ["http://127.0.0.1:1234/v1"]
+
+
+def test_finish_attempt_keeps_an_error(tmp_path):
+    led = tmp_path / "l.csv"
+    record_attempt(led, _row("k1", eval_id="eval-a"))
+    finish_attempt(led, "eval-a", "error")
+    finish_attempt(led, "eval-a", "passed")
+    assert [r["status"] for r in read_ledger(led)] == ["error"]

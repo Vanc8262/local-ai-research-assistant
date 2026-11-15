@@ -63,6 +63,8 @@ def record_attempt(ledger: Path, row: dict) -> None:
 
 
 def finish_attempt(ledger: Path, eval_id: str, status: str) -> None:
+    """Set the attempt's status. An attempt already marked "error" (a run ended without a checked
+    report, or the eval raised) stays "error": the scorecard's passed or missed doesn't erase that."""
     if status not in FINAL_STATUSES:
         raise ValueError(f"attempt status must be one of {', '.join(FINAL_STATUSES)}, not {status!r}")
     rows = read_ledger(ledger)
@@ -70,7 +72,8 @@ def finish_attempt(ledger: Path, eval_id: str, status: str) -> None:
     if not matches:
         raise ValueError(f"no attempt for {eval_id} in {ledger}")
     for row in matches:
-        row["status"] = status
+        if row.get("status") != "error":
+            row["status"] = status
     with Path(ledger).open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=LEDGER_FIELDS, extrasaction="ignore", lineterminator="\n")
         writer.writeheader()

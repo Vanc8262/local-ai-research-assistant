@@ -191,7 +191,8 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
 
     offload_probe: called once after the first question, while the candidate is still loaded, for
     (layers on the GPU, layers in the model) or None when unknown; saved in manifest.json as
-    bench.offload for the fit check (assistant/fit.py). A probe that raises counts as unknown."""
+    bench.offload for the fit check (assistant/fit.py). A probe that raises counts as unknown.
+    Only a bench eval (bench given) is probed."""
     if candidate_tier is not None and settings.tier(candidate_tier).kind != "local":
         raise ValueError(f"candidate tier {candidate_tier!r} is not local; bench candidates run on this PC")
     verify_tier = verify_tier or candidate_tier
@@ -222,7 +223,7 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
                     ram.sample()
                     rows.append({**row, "run": run, "min_free_ram_mb": ram.low})
                     write_summary(out_dir, rows, ram.lowest)   # after every run, so a long eval can be read as it goes
-            if number == 0 and offload_probe is not None:
+            if number == 0 and offload_probe is not None and bench is not None:
                 _save_offload(out_dir, manifest, offload_probe)
     write_summary(out_dir, rows, ram.lowest)
     return out_dir, rows
@@ -233,11 +234,8 @@ def _save_offload(out_dir: Path, manifest: dict, probe) -> None:
         found = probe()
     except Exception:   # noqa: BLE001 - the GPU check is then unknown; the eval goes on
         found = None
-    offload = list(found) if found else None
-    if "bench" in manifest:   # a copy: the caller's bench dict stays as it gave it
-        manifest["bench"] = {**manifest["bench"], "offload": offload}
-    else:                     # not a bench run, so not a bench block either
-        manifest["offload"] = offload
+    # a copy, so the caller's bench dict stays as it gave it
+    manifest["bench"] = {**manifest["bench"], "offload": list(found) if found else None}
     write_manifest(out_dir, manifest)
 
 

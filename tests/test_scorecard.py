@@ -158,10 +158,54 @@ def test_rank_tie_goes_to_faster():
 
 
 def test_rank_errors_break_a_facts_tie():
-    facts = [0.8] * 8
-    careful = card("careful", facts, errors=[0.0] * 8, minutes=50)
-    sloppy = card("sloppy", facts, errors=[0.2] * 8, minutes=5)
+    facts = [0.8] * 10
+    careful = card("careful", facts, errors=[0.0] * 10, minutes=50)
+    sloppy = card("sloppy", facts, errors=[0.2] * 10, minutes=5)
     assert [c.candidate for c in rank([sloppy, careful], PASS)] == ["careful", "sloppy"]
+
+
+def test_a_measure_with_fewer_than_10_shared_questions_is_tied():
+    good, poor = card("good", [0.9] * 9, minutes=50), card("poor", [0.5] * 9, minutes=5)
+    assert [c.candidate for c in rank([good, poor], PASS)] == ["poor", "good"]   # tied on 9: faster wins
+    good, poor = card("good", [0.9] * 10, minutes=50), card("poor", [0.5] * 10, minutes=5)
+    assert [c.candidate for c in rank([good, poor], PASS)] == ["good", "poor"]
+
+
+def cycle_cards():
+    """The reviewer's example: A beats B on facts; A and C, B and C tie on facts, so the faster wins:
+    C beats A, B beats C. A cycle, so every Copeland score is 0 and facts_right orders them."""
+    return [card("A", [0.9] * 10, minutes=20), card("B", [0.6] * 10, minutes=5),
+            card("C", [0, 1, 1, 1, 0, 1, 1, 0, 1, 1], minutes=10)]
+
+
+def test_rank_is_the_same_for_every_input_order():
+    import itertools
+    orders = {tuple(c.candidate for c in rank(list(p), PASS)) for p in itertools.permutations(cycle_cards())}
+    assert orders == {("A", "C", "B")}
+
+
+def test_rank_by_copeland_score():
+    # D beats everyone on facts; E and F tie with each other on everything but E is faster
+    d = card("D", [0.95] * 10, minutes=30)
+    e = card("E", [0.5] * 10, minutes=10)
+    f = card("F", [0.5] * 10, minutes=20)
+    assert [c.candidate for c in rank([f, e, d], PASS)] == ["D", "E", "F"]
+
+
+def test_scorecard_notes_a_cycle_and_the_shared_question_count():
+    ranked = rank(cycle_cards(), PASS)
+    text = scorecard_markdown(ranked, SPEC, None)
+    assert "Ranks 1–3 are not separable on this bench (A, C, B)" in text
+    assert "10 shared questions" in text
+    plain = scorecard_markdown(rank([card("D", [0.95] * 10), card("E", [0.5] * 10)], PASS), SPEC, None)
+    assert "not separable" not in plain
+
+
+def test_ranking_paragraph_states_what_the_tests_assume():
+    text = scorecard_markdown([card("A", [0.9] * 10)], SPEC, None)
+    assert "no multiple-comparison correction" in text
+    assert "both produced a report" in text
+    assert "unpaired" in text and "at least 10" in text
 
 
 def test_rank_fit_failure_last():
@@ -323,8 +367,8 @@ def test_scorecard_has_caveat(tmp_path):
 
 
 def test_write_scorecard_writes_markdown_and_csv(tmp_path):
-    a = make_eval(tmp_path, "eval-a", questions(5, facts=0.9, errors=0.01, minutes=10))
-    b = make_eval(tmp_path, "eval-b", questions(5, facts=0.5, errors=0.01, minutes=5), candidate="qwen-9b")
+    a = make_eval(tmp_path, "eval-a", questions(10, facts=0.9, errors=0.01, minutes=10))
+    b = make_eval(tmp_path, "eval-b", questions(10, facts=0.5, errors=0.01, minutes=5), candidate="qwen-9b")
     cards, _ = build_cards([a, b], SPEC, env={})
     out = tmp_path / "results" / "bench_v1_scorecard.md"
     write_scorecard(out, rank(cards, SPEC.pass_line), SPEC, calibration_md=CALIBRATION)
@@ -334,6 +378,16 @@ def test_write_scorecard_writes_markdown_and_csv(tmp_path):
     assert [(r["rank"], r["candidate"], r["passes"]) for r in rows] == [("1", "gemma-e4b", "True"),
                                                                         ("2", "qwen-9b", "False")]
     assert rows[0]["fit"] == "pass" and float(rows[0]["facts_right"]) == pytest.approx(0.9)
+    assert [r["result"] for r in rows] == ["pass", "miss"]
+
+
+def test_an_errored_attempt_shows_its_scored_result():
+    good = card("good", [0.9] * 10)
+    good.ledger_status = "error"
+    ranked = rank([good, card("poor", [0.5] * 10)], PASS)
+    assert "error (scored passed)" in scorecard_markdown(ranked, SPEC, None)
+    ranked[0].passes = False
+    assert "error (scored missed)" in scorecard_markdown(ranked, SPEC, None)
 
 
 # --- the CLI ----------------------------------------------------------------------------------
@@ -375,8 +429,8 @@ def attempt(ledger, eval_id):
 
 
 def test_cli_scorecard_marks_test_attempts_passed_or_missed(repo, tmp_path, capsys):
-    good = make_eval(tmp_path / "runs", "eval-good", questions(5, facts=0.9, errors=0.01), split="test")
-    poor = make_eval(tmp_path / "runs", "eval-poor", questions(5, facts=0.5, errors=0.01), split="test")
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    poor = make_eval(tmp_path / "runs", "eval-poor", questions(10, facts=0.5, errors=0.01), split="test")
     for name in ("eval-good", "eval-poor"):
         attempt(repo.ledger, name)
     repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()   # the attempts are committed
@@ -411,3 +465,44 @@ def test_cli_scorecard_refuses_mixed_versions_with_exit_1(repo, tmp_path, capsys
     b = make_eval(tmp_path / "runs", "eval-b", questions(3), version=2)
     assert repo(str(a), str(b), "--out", str(tmp_path / "card.md")) == 1
     assert "refused" in capsys.readouterr().out.lower()
+
+
+def test_cli_scorecard_keeps_an_error_attempt(repo, tmp_path):
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    attempt(repo.ledger, "eval-good")
+    from assistant.ledger import finish_attempt
+    finish_attempt(repo.ledger, "eval-good", "error")   # a run had no checked report
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    out = tmp_path / "card.md"
+    assert repo(str(good), "--out", str(out)) == 0
+    assert [r["status"] for r in read_ledger(repo.ledger)] == ["error"]
+    assert "error (scored passed)" in out.read_text(encoding="utf-8")
+    with out.with_suffix(".csv").open(encoding="utf-8") as handle:
+        assert next(csv.DictReader(handle))["result"] == "error (scored passed)"
+
+
+def test_cli_scorecard_checks_every_attempt_before_writing_any(repo, tmp_path, capsys):
+    a = make_eval(tmp_path / "runs", "eval-a", questions(10, facts=0.9), split="test")
+    b = make_eval(tmp_path / "runs", "eval-b", questions(10, facts=0.5), split="test")
+    attempt(repo.ledger, "eval-a")
+    attempt(repo.ledger, "eval-b")
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    lines = repo.ledger.read_text(encoding="utf-8").splitlines(keepends=True)
+    repo.ledger.write_text("".join(lines[:2]), encoding="utf-8")   # the working copy lost eval-b
+    before = repo.ledger.read_text(encoding="utf-8")
+    out = tmp_path / "card.md"
+    assert repo(str(a), str(b), "--out", str(out)) == 1
+    assert "eval-b" in capsys.readouterr().out
+    assert repo.ledger.read_text(encoding="utf-8") == before and not out.exists()
+
+
+def test_cli_scorecard_default_paths_are_in_the_repo(repo, tmp_path, monkeypatch):
+    (repo.root / "results" / "calibration_v1_referee.md").write_text(CALIBRATION, encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    a = make_eval(tmp_path / "runs", "eval-a", questions(3))
+    assert repo(str(a)) == 0
+    written = repo.root / "results" / "bench_v1_scorecard.md"
+    assert "supported recall: 95 of 100" in written.read_text(encoding="utf-8")
+    assert written.with_suffix(".csv").is_file() and not (elsewhere / "results").exists()

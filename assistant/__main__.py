@@ -63,7 +63,7 @@ from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
 from .bench_spec import REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, load_bench
-from .ledger import DEFAULT_LEDGER, RetestLimit, check_attempt, finish_attempt, record_attempt
+from .ledger import DEFAULT_LEDGER, RetestLimit, check_attempt, finish_attempt, read_ledger, record_attempt
 from .manifest import REPO_ROOT, _git, sha256_file
 from .referee import PROMPT_VERSION, score_eval
 from .verify import CAVEAT, failures, verify_run
@@ -534,8 +534,10 @@ def cmd_referee(settings, args) -> int:
 
 def cmd_scorecard(settings, args) -> int:
     """Fit, refereed quality and rank of bench evals (assistant/scorecard.py). Exit 1 when refused.
-    On the test split, every eval's attempt must already be in the committed ledger at HEAD; each is
-    then marked passed or missed in results/bench_ledger.csv, which is to be committed next."""
+    On the test split, every eval's attempt must already be in the committed ledger at HEAD and in
+    the working ledger; only then is anything written. Each attempt is marked passed or missed in
+    results/bench_ledger.csv (one already marked "error" stays so), which is to be committed next.
+    The default output and the calibration report live in the repo's results/, whatever the cwd."""
     spec_path = Path(args.bench)
     try:
         spec = load_bench(spec_path)
@@ -546,21 +548,30 @@ def cmd_scorecard(settings, args) -> int:
     except (scorecard.ScorecardRefused, BenchSpecError, OSError, ValueError) as exc:
         print(f"Scorecard refused: {exc}")
         return 1
-    calibration_file = Path("results") / f"calibration_v{spec.version}_{spec.referee.tier}.md"
+    test = bool(ranked) and ranked[0].split == "test"
+    ledger = Path(REPO_ROOT) / DEFAULT_LEDGER
+    if test:   # check every attempt before writing any, so a refusal leaves the ledger as it was
+        status = {r.get("eval_id"): r.get("status", "") for r in read_ledger(ledger)}
+        lost = [c.eval_id for c in ranked if c.eval_id not in status]
+        if lost:
+            print(f"Scorecard refused: {', '.join(lost)} not in the working {DEFAULT_LEDGER}, though HEAD has "
+                  f"them; restore it (git checkout HEAD -- {DEFAULT_LEDGER}) and run again")
+            return 1
+        for card in ranked:
+            card.ledger_status = status[card.eval_id]
+    results = Path(REPO_ROOT) / "results"
+    calibration_file = results / f"calibration_v{spec.version}_{spec.referee.tier}.md"
     calibration_md = calibration_file.read_text(encoding="utf-8") if calibration_file.is_file() else None
-    out = Path(args.out or f"results/bench_v{spec.version}_scorecard.md")
+    out = Path(args.out) if args.out else results / f"bench_v{spec.version}_scorecard.md"
     scorecard.write_scorecard(out, ranked, spec, calibration_md=calibration_md, reference=reference)
     print(out.read_text(encoding="utf-8"))
     print(f"Saved: {out} and {out.with_suffix('.csv')}")
-    if ranked and ranked[0].split == "test":
-        ledger = Path(REPO_ROOT) / DEFAULT_LEDGER
-        try:
-            for card in ranked:
-                finish_attempt(ledger, card.eval_id, "passed" if card.passes else "missed")
-        except (ValueError, OSError) as exc:   # the working ledger lost a row that HEAD has
-            print(f"Ledger not updated: {exc}. Restore it (git checkout HEAD -- {DEFAULT_LEDGER}) and run again.")
-            return 1
-        print(f"Marked {len(ranked)} test attempts passed or missed in {DEFAULT_LEDGER}; commit that file.")
+    if test:
+        for card in ranked:
+            finish_attempt(ledger, card.eval_id, "passed" if card.passes else "missed")
+        kept = sum(c.ledger_status == "error" for c in ranked)
+        print(f"Marked {len(ranked) - kept} test attempts passed or missed in {DEFAULT_LEDGER}"
+              + (f" ({kept} already marked error, kept as error)" if kept else "") + "; commit that file.")
     return 0
 
 

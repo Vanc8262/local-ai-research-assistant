@@ -9,16 +9,21 @@ referee (referee.csv) and the pipeline (summary.csv), per question first:
   without a report has none (None), and counts under the fit check instead.
 - minutes: research + verify + repair. With several runs of a question, its runs are averaged.
 
-Ranking: fit failures are listed last and not ranked. Among the rest, A ranks above B on facts when
-the paired bootstrap interval (by question, 95%) of A - B lies wholly above 0; when it holds 0 they
-are tied on facts, and errors through decides the same way (lower wins); when both are tied, the
-lower median minutes per report wins. Only local-mode rows are candidates; a hybrid row (Gemini
-writes, the candidate checks) is shown as a reference, not ranked.
+Ranking: fit failures are listed last and not ranked. Every pair of the rest is decided in turn: A
+beats B on facts when the paired bootstrap interval (by question, 95%) of A - B lies wholly above 0;
+when it holds 0 (or fewer than MIN_SHARED questions pair up) they are tied on facts, and errors
+through decides the same way (lower wins); when both are tied, the lower median minutes per report
+wins. Those pairwise results need not be transitive (A > B > C > A happens), so a sort by them
+would depend on the input order. The rank is therefore the Copeland score, pairwise wins minus
+losses, with equal scores ordered by facts right, median minutes and candidate key; a cycle is
+named on the scorecard as ranks that the bench can't separate. Only local-mode rows are
+candidates; a hybrid row (Gemini writes, the candidate checks) is shown as a reference, not ranked.
 
 The scorecard refuses to mix bench versions or splits, and refuses a run the referee hasn't fully
 judged. On the test split it also refuses an eval whose tree wasn't clean, that has no referee.csv,
 or whose attempt isn't in the committed ledger at HEAD; the caller then marks each attempt passed or
-missed, so the result is written only for an attempt that can no longer be quietly undone.
+missed, so the result is written only for an attempt that can no longer be quietly undone. An attempt
+the ledger already holds as "error" stays "error", and its card shows "error (scored passed|missed)".
 """
 from __future__ import annotations
 
@@ -30,7 +35,6 @@ import random
 import re
 import statistics
 from dataclasses import dataclass
-from functools import cmp_to_key
 from pathlib import Path
 
 from .bench_spec import REFEREE_CAVEAT, BenchSpec, PassLine
@@ -39,6 +43,7 @@ from .fit import _number, fit_failures, report_seconds
 BOOTSTRAP_N = 10000
 SEED = 20261115
 LOCAL = "local"
+MIN_SHARED = 10   # paired questions a measure needs before it can separate two candidates
 
 
 class ScorecardRefused(Exception):
@@ -64,6 +69,21 @@ class Card:
     mode: str = LOCAL
     gguf_sha256: str = ""
     gguf_file: str = ""
+    ledger_status: str = ""   # the test attempt's status before the scorecard; "error" stays error
+
+
+@dataclass
+class Pairwise:
+    """One pair's decision. facts/errors: (mean a - b, low, high), or None when nothing pairs up;
+    the *_n counts are the questions both cards scored on that measure."""
+    a: Card
+    b: Card
+    facts: tuple[float, float, float] | None
+    facts_n: int
+    errors: tuple[float, float, float] | None
+    errors_n: int
+    winner: Card | None
+    decided_by: str   # "facts right", "errors through", "minutes" or "tie"
 
 
 # --- reading an eval ---------------------------------------------------------------------------
@@ -147,7 +167,7 @@ def paired_bootstrap(a: dict[str, float], b: dict[str, float], n: int = BOOTSTRA
                      seed: int = SEED) -> tuple[float, float, float]:
     """Mean of a - b over the questions both have (None skipped), and its 95% percentile interval.
     ValueError when there is nothing to pair: two cards on different questions aren't compared."""
-    shared = [q for q in a if q in b]
+    shared = sorted(q for q in a if q in b)   # sorted, so swapping a and b mirrors the interval exactly
     if not shared:
         raise ValueError("no shared questions to compare")
     diffs = [a[q] - b[q] for q in shared if a[q] is not None and b[q] is not None]
@@ -169,43 +189,94 @@ def _passes(card: Card, line: PassLine) -> bool:
             and card.facts_right >= line.min_facts_right and card.errors_through <= line.max_errors_through)
 
 
-def _interval(a: Card, b: Card, key: str) -> tuple[float, float] | None:
-    """The paired interval of a - b on one measure, or None when no question has both scores."""
-    try:
-        _, low, high = paired_bootstrap({q: v[key] for q, v in a.per_question.items()},
-                                        {q: v[key] for q, v in b.per_question.items()})
-    except ValueError:
-        return None
-    return low, high
+def _paired(a: Card, b: Card, key: str) -> tuple[tuple[float, float, float] | None, int]:
+    """The paired bootstrap of a - b on one measure, and how many questions pair up."""
+    av = {q: v[key] for q, v in a.per_question.items()}
+    bv = {q: v[key] for q, v in b.per_question.items()}
+    n = sum(av[q] is not None and bv[q] is not None for q in av if q in bv)
+    if not n:
+        return None, 0
+    return paired_bootstrap(av, bv), n
 
 
-def _compare(a: Card, b: Card) -> int:
-    facts = _interval(a, b, "facts_right")
-    if facts and facts[0] > 0:
-        return -1
-    if facts and facts[1] < 0:
-        return 1
-    errors = _interval(a, b, "errors_through")
-    if errors and errors[1] < 0:   # a lets wholly fewer errors through
-        return -1
-    if errors and errors[0] > 0:
-        return 1
-    slow = float("inf")   # no minutes at all sorts after any known time
+def compare(a: Card, b: Card) -> Pairwise:
+    """The spec's pairwise rule: facts right, then errors through, each only when its paired
+    interval excludes 0 over at least MIN_SHARED questions; then the lower median minutes."""
+    facts, facts_n = _paired(a, b, "facts_right")
+    errors, errors_n = _paired(a, b, "errors_through")
+    decide = lambda winner, how: Pairwise(a, b, facts, facts_n, errors, errors_n, winner, how)
+    if facts and facts_n >= MIN_SHARED:
+        if facts[1] > 0:
+            return decide(a, "facts right")
+        if facts[2] < 0:
+            return decide(b, "facts right")
+    if errors and errors_n >= MIN_SHARED:
+        if errors[2] < 0:   # a lets wholly fewer errors through
+            return decide(a, "errors through")
+        if errors[1] > 0:
+            return decide(b, "errors through")
+    slow = float("inf")   # no minutes at all loses to any known time
     a_min = slow if a.median_minutes is None else a.median_minutes
     b_min = slow if b.median_minutes is None else b.median_minutes
-    return (a_min > b_min) - (a_min < b_min)
+    if a_min != b_min:
+        return decide(a if a_min < b_min else b, "minutes")
+    return decide(None, "tie")
 
 
-def rank(cards: list[Card], pass_line: PassLine) -> list[Card]:
-    """Fit passes in rank order, then fit failures as given; sets each card's `passes`."""
-    for card in cards:
-        card.passes = _passes(card, pass_line)
+def pairwise(cards: list[Card]) -> list[Pairwise]:
+    """Every pair of the fit-passing cards, decided; ScorecardRefused for a pair with no shared question."""
     fits = [c for c in cards if not c.fit]
+    found = []
     for i, a in enumerate(fits):
         for b in fits[i + 1:]:
             if not set(a.per_question) & set(b.per_question):
                 raise ScorecardRefused(f"{a.eval_id} and {b.eval_id} share no questions, so they can't be compared")
-    return sorted(fits, key=cmp_to_key(_compare)) + [c for c in cards if c.fit]
+            found.append(compare(a, b))
+    return found
+
+
+def _order_key(card: Card, score: int) -> tuple:
+    facts = card.facts_right
+    minutes = card.median_minutes
+    return (-score, facts is None, -(facts or 0.0), minutes is None, minutes or 0.0, card.candidate_key, card.eval_id)
+
+
+def rank(cards: list[Card], pass_line: PassLine) -> list[Card]:
+    """Fit passes by Copeland score (pairwise wins minus losses), then fit failures as given;
+    sets each card's `passes`. The order of the fit passes never depends on the input order."""
+    for card in cards:
+        card.passes = _passes(card, pass_line)
+    score = {id(c): 0 for c in cards}
+    for pair in pairwise(cards):
+        if pair.winner is not None:
+            loser = pair.b if pair.winner is pair.a else pair.a
+            score[id(pair.winner)] += 1
+            score[id(loser)] -= 1
+    fits = sorted((c for c in cards if not c.fit), key=lambda c: _order_key(c, score[id(c)]))
+    return fits + [c for c in cards if c.fit]
+
+
+def cycles(pairs: list[Pairwise]) -> list[list[Card]]:
+    """Groups of cards whose pairwise wins go round in a circle (strongly connected, size > 1)."""
+    cards = list({id(c): c for p in pairs for c in (p.a, p.b)}.values())
+    beats = {id(c): set() for c in cards}
+    for p in pairs:
+        if p.winner is not None:
+            beats[id(p.winner)].add(id(p.b if p.winner is p.a else p.a))
+    reach = {k: set(v) for k, v in beats.items()}
+    for mid in reach:   # transitive closure (Floyd-Warshall); a handful of candidates at most
+        for k in reach:
+            if mid in reach[k]:
+                reach[k] |= reach[mid]
+    groups, seen = [], set()
+    for c in cards:
+        if id(c) in seen:
+            continue
+        group = [d for d in cards if d is c or (id(d) in reach[id(c)] and id(c) in reach[id(d)])]
+        seen |= {id(d) for d in group}
+        if len(group) > 1:
+            groups.append(group)
+    return groups
 
 
 # --- building cards ----------------------------------------------------------------------------
@@ -353,6 +424,51 @@ def _minutes(value) -> str:
     return "-" if value is None else f"{value:.1f}"
 
 
+def result(card: Card) -> str:
+    """pass / miss against the pass line; an attempt the ledger already holds as "error" keeps it."""
+    if card.mode != LOCAL:
+        return "-"
+    if card.ledger_status == "error":
+        return f"error (scored {'passed' if card.passes else 'missed'})"
+    return "pass" if card.passes else "miss"
+
+
+def _labels(cards: list[Card]) -> dict[int, str]:
+    """The candidate name, plus the eval when one candidate has several cards (retests)."""
+    names = [c.candidate for c in cards]
+    return {id(c): c.candidate if names.count(c.candidate) == 1 else f"{c.candidate} ({c.eval_id})" for c in cards}
+
+
+def _measure(found, n: int, what: str) -> str:
+    if found is None:
+        return f"{what}: no shared scores"
+    mean, low, high = found
+    note = "" if n >= MIN_SHARED else f", fewer than {MIN_SHARED} so tied"
+    return f"{what} {mean:+.1%} ({low:+.1%} to {high:+.1%}) over {n} shared questions{note}"
+
+
+def _pairwise_lines(cards: list[Card]) -> list[str]:
+    """The pairwise decisions behind the ranks, and a note for each cycle. cards in rank order."""
+    pairs = pairwise(cards)
+    if not pairs:
+        return []
+    label = _labels(cards)
+    lines = ["## Pairwise comparisons", "", "Differences are first minus second, paired by question.", ""]
+    for p in pairs:
+        verdict = ("tied on everything" if p.winner is None else
+                   f"{label[id(p.winner)]} wins the pair on {p.decided_by}")
+        lines.append(f"- {label[id(p.a)]} vs {label[id(p.b)]}: {_measure(p.facts, p.facts_n, 'facts right')}; "
+                     f"{_measure(p.errors, p.errors_n, 'errors through')}; {verdict}.")
+    position = {id(c): n for n, c in enumerate((c for c in cards if not c.fit), start=1)}
+    for group in cycles(pairs):
+        group.sort(key=lambda c: position[id(c)])
+        first, last = position[id(group[0])], position[id(group[-1])]
+        lines += ["", f"Ranks {first}–{last} are not separable on this bench "
+                      f"({', '.join(label[id(c)] for c in group)}): their pairwise results go round in a "
+                      "circle, so the order among them comes from the tie-breaks."]
+    return lines
+
+
 def _ranks(cards: list[Card]) -> list[str]:
     numbers, n = [], 0
     for card in cards:
@@ -386,9 +502,17 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
              f"free RAM never below {fit.min_free_ram_mb} MB, at most {fit.max_report_minutes:g} minutes per report, "
              f"at most {fit.max_error_share:.0%} of runs without a report. `gpu?` means the offload was not "
              "recorded, so the GPU check is unknown and not counted as a failure.", "",
-             "Ranking: fit failures are listed last and not ranked. Then facts right, then errors through, each "
-             "compared by a paired bootstrap over questions (95%); when both are tied, the lower median minutes "
-             "per report ranks first. A failed run counts as 0 facts right.", ""]
+             "Ranking: fit failures are listed last and not ranked. Every pair of the rest is decided by facts "
+             "right, then errors through, each by a paired bootstrap over the questions both have (95%; each pair "
+             "is tested on its own, with no multiple-comparison correction). A measure needs at least "
+             f"{MIN_SHARED} shared questions to separate a pair; with fewer it counts as tied. When both are tied, "
+             "the lower median minutes per report wins the pair. Errors through is compared only on questions "
+             "where both produced a report: a failed run already costs facts right (it counts as 0) and counts "
+             "toward the fit check's limit on runs without a report. The rank is the Copeland score, pairwise "
+             "wins minus losses; equal scores are ordered by facts right, then median minutes, then candidate "
+             "key. The intervals in the table are each card's own, unpaired bootstrap over questions; the "
+             "ranking uses the paired intervals under Pairwise comparisons, so two cards whose intervals "
+             "overlap can still be separated.", ""]
     if split != "test":
         lines += [f"This is the {split or '-'} split: the pass line counts only on the test split.", ""]
     lines += ["| Rank | Candidate | Eval | Candidate key | GGUF sha256 | Fit | Facts right (95% CI) | "
@@ -399,7 +523,10 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
         lines.append(f"| {number or '-'} | {card.candidate} | {card.eval_id} | {card.candidate_key} | "
                      f"{card.gguf_sha256[:12] or '-'} | {_fit_cell(card)} | {_with_ci(card.facts_right, card.facts_ci)} | "
                      f"{_with_ci(card.errors_through, card.errors_ci)} | {_minutes(card.median_minutes)} | {flags} | "
-                     f"{'pass' if card.passes else 'miss'} |")
+                     f"{result(card)} |")
+    pairs = _pairwise_lines(cards)
+    if pairs:
+        lines += [""] + pairs
     if reference:
         lines += ["", "## Reference (not ranked)", "",
                   "Rows from another writer in the same eval (hybrid: Gemini writes with Tavily search, the "
@@ -429,7 +556,7 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
 
 CSV_FIELDS = ("rank", "candidate", "mode", "candidate_key", "eval_id", "bench_version", "split", "gguf_sha256",
               "gguf_file", "fit", "facts_right", "facts_ci_low", "facts_ci_high", "errors_through", "errors_ci_low",
-              "errors_ci_high", "median_minutes", "flags", "passes")
+              "errors_ci_high", "median_minutes", "flags", "passes", "result")
 
 
 def _csv_row(number: str, card: Card) -> dict:
@@ -441,7 +568,7 @@ def _csv_row(number: str, card: Card) -> dict:
             "facts_right": num(card.facts_right), "facts_ci_low": ci(card.facts_ci, 0),
             "facts_ci_high": ci(card.facts_ci, 1), "errors_through": num(card.errors_through),
             "errors_ci_low": ci(card.errors_ci, 0), "errors_ci_high": ci(card.errors_ci, 1),
-            "median_minutes": num(card.median_minutes), "flags": " | ".join(card.flags), "passes": card.passes}
+            "median_minutes": num(card.median_minutes), "flags": " | ".join(card.flags), "passes": card.passes, "result": result(card)}
 
 
 def write_scorecard(out: Path, cards: list[Card], spec: BenchSpec, *, calibration_md: str | None = None,

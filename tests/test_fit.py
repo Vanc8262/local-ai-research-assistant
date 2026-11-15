@@ -108,3 +108,14 @@ def test_run_eval_records_an_unknown_offload_and_survives_a_failing_probe(tmp_pa
                              candidate_tier="local", bench={"version": 1}, offload_probe=broken)
     assert rows[0]["outcome"] == "ok"
     assert json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))["bench"]["offload"] is None
+
+
+def test_run_eval_probes_only_bench_evals(tmp_path):
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    calls = []
+    out_dir, _ = run_eval(settings_for(tmp_path), [Question(id="a", text="q")], ["local"],
+                          runner=[sys.executable, str(script)], transport=transport([]), runs=1,
+                          offload_probe=lambda: calls.append(1) or (1, 1))
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert calls == [] and "offload" not in manifest and "bench" not in manifest
