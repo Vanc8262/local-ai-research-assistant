@@ -1,0 +1,54 @@
+{
+  "before": {
+    "claims": 28,
+    "uncited": 1,
+    "supported": 24,
+    "partial": 2,
+    "unsupported": 1,
+    "unchecked": 0,
+    "citation_coverage": 0.964,
+    "citation_accuracy": 0.889,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 27,
+    "uncited": 0,
+    "supported": 27,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "cited",
+      "before": "In eager mode, Polars performs the work in the exact order the code is written [7:20].",
+      "after": "In eager mode, Polars performs the work in the exact order the code is written [7:20] [5].",
+      "reason": "The passage explicitly states that in eager mode, Polars performs work in the exact order the code is written."
+    },
+    {
+      "action": "cited",
+      "before": "If a data file is too large, an initial statement in eager mode might crash the application due to running out of memory [7:04].",
+      "after": "If a data file is too large, an initial statement in eager mode might crash the application due to running out of memory [7:04] [5].",
+      "reason": "The passage states that if the data file is too large, the initial statement in eager mode would crash the application due to running out of memory."
+    },
+    {
+      "action": "cited",
+      "before": "The lazy API can lead to lower memory use and less CPU usage [7:11], and it provides the ability to process bigger datasets that may not fit into the system's memory [7:11].",
+      "after": "The lazy API can lead to lower memory use and less CPU usage [7:11], and it provides the ability to process bigger datasets that may not fit into the system's memory [7:11] [7].",
+      "reason": "The source confirms that lazy execution is used for bigger-than-memory workloads and that Polars is designed for speed and efficiency."
+    },
+    {
+      "action": "removed",
+      "before": "In one study, lazy execution was 2.25-2.27$\\times$ faster overall compared to eager execution .",
+      "after": "",
+      "reason": "the model's quote is not in the source: The source explicitly states that lazy execution was 2.25-2.27× faster overall compared to eager execution."
+    }
+  ]
+}

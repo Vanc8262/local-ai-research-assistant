@@ -1,0 +1,22 @@
+question,mode,run,run_id,decider,doubted_before,doubted_now,accuracy_before,removed,rewritten,claims,facts,gate,gate_failures,old_gate,old_gate_failures,old_removed,old_rewritten
+bm25,hybrid,1,20261114-200132-11152f,quote,4,5,0.767,9,1,35,1.0,fail,accuracy_before changed_share changed_count,fail,accuracy_before changed_share changed_count,11,1
+hnsw,hybrid,1,20261114-203615-7f421e,quote,2,5,0.914,1,0,34,1.0,pass,,pass,,0,0
+flash-attention,hybrid,1,20261114-210321-007076,quote,1,4,0.931,2,0,27,1.0,pass,,pass,,1,0
+kv-cache,hybrid,1,20261114-215620-c3eac7,quote,6,7,1.0,0,0,38,0.333,fail,facts,fail,facts,2,0
+speculative-decoding,hybrid,1,20261114-222155-434766,quote,2,7,1.0,1,0,37,1.0,pass,,pass,,2,0
+moe-routing,hybrid,1,20261114-224628-c52e15,quote,1,5,0.97,0,1,33,1.0,pass,,pass,,0,1
+dpo,local,1,20261114-230228-f6798e,quote,1,0,1.0,0,0,20,0.75,pass,,pass,,1,0
+dpo,hybrid,1,20261114-230755-1c0b95,quote,19,13,1.0,0,0,49,1.0,pass,,pass,,1,0
+react-pattern,hybrid,1,20261114-234239-958fee,quote,3,5,0.976,2,0,40,1.0,pass,,pass,,2,0
+free-threaded-python,hybrid,1,20261115-000745-ede4e5,quote,3,4,1.0,0,0,41,1.0,pass,,pass,,0,0
+pandas-arrow,hybrid,1,20261115-002819-45fc9a,quote,1,1,0.912,0,2,34,0.667,fail,facts,fail,facts,0,1
+polars-lazy,local,1,20261115-004030-f9d769,quote,2,0,0.889,1,0,27,1.0,pass,,pass,,1,0
+polars-lazy,hybrid,1,20261115-004637-092e1a,quote,8,12,1.0,1,0,44,1.0,pass,,pass,,1,0
+cap-theorem,hybrid,1,20261115-011758-effac5,quote,6,1,1.0,0,0,44,0.75,pass,,pass,,1,0
+k8s-hpa,hybrid,1,20261115-013800-03c2a3,quote,2,7,0.919,2,1,35,0.75,pass,,pass,,1,1
+terraform-state,hybrid,1,20261115-020006-94ad4c,quote,7,6,1.0,0,0,41,1.0,pass,,pass,,2,1
+shap,hybrid,1,20261115-022350-348ead,quote,3,10,0.889,2,1,34,1.0,pass,,pass,,1,0
+k-fold-cv,hybrid,1,20261115-024608-e07dbc,quote,2,2,0.923,0,0,39,0.667,fail,facts,fail,facts,0,0
+hyde,local,1,20261115-030530-c4d8b3,quote,1,0,0.923,1,0,12,0.667,fail,facts,fail,changed_share facts,2,0
+cross-encoder-rerank,hybrid,1,20261115-032938-71a1c3,quote,4,6,0.971,1,0,34,1.0,pass,,pass,,1,0
+gptq-awq,hybrid,1,20261115-035545-e43ced,quote,5,6,0.962,1,0,26,1.0,pass,,pass,,1,0

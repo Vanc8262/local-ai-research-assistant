@@ -1,0 +1,42 @@
+{
+  "before": {
+    "claims": 42,
+    "uncited": 1,
+    "supported": 40,
+    "partial": 1,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.976,
+    "citation_accuracy": 0.976,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 40,
+    "uncited": 0,
+    "supported": 40,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "This adds complexity compared to simpler prompting techniques.",
+      "after": "",
+      "reason": "no likely source supports it"
+    },
+    {
+      "action": "removed",
+      "before": "By intertwining reasoning and acting, ReAct enables LLMs to perform dynamic, robust, and factual task execution, making it a cornerstone for advanced AI agent systems .",
+      "after": "",
+      "reason": "The source supports the mechanism of intertwining reasoning and action and the resulting dynamic nature, but it does not state that ReAct is a cornerstone for advanced AI agent systems.; The source confirms ReAct intertwines reasoning and action within agent systems but emphasizes that it requires careful design and guardrails to be reliable."
+    }
+  ]
+}

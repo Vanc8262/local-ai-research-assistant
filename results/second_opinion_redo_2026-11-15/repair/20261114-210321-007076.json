@@ -1,0 +1,42 @@
+{
+  "before": {
+    "claims": 29,
+    "uncited": 0,
+    "supported": 27,
+    "partial": 2,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.931,
+    "dangling_citations": 0,
+    "doubted": 4,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 27,
+    "uncited": 0,
+    "supported": 27,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 3,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "It moved from a \"split-K\" scheme, where different warps computed parts of K and V with shared memory synchronization, to a \"split-Q\" strategy .",
+      "after": "",
+      "reason": "the decider doubts it (p 0.47, confidence 0.00); The passages explicitly detail the shift from the split-K scheme in FlashAttention v1 to the split-Q strategy in FlashAttention-2.; model reply was not a verdict: ```json { \"verdict\": \"supported\", \"quote\": \"Within each thread block, standard FlashAttention used a split-K strategy, dividing S = Q K ⊺ ∈ R N × N S = QK^\\intercal \\in\\mathbb{R}^{N \\times N} S = Q K ⊺ ∈ R N × N 6 columns among warps and performing explicit reductions in shared memory. FlashAttentio"
+    },
+    {
+      "action": "removed",
+      "before": "By implementing these techniques, FlashAttention achieves substantial speedups (2-4x for FlashAttention-1, up to 3x faster for FlashAttention-2 over previous FlashAttention, and 1.5-2.0x faster for FlashAttention-3 with FP16) .",
+      "after": "",
+      "reason": "The source mentions a general 2-4x speedup but does not provide the specific speedup figures for FlashAttention-1, FlashAttention-2, or FlashAttention-3.; The source supports the 2-4x speedup for FA-1, but only states 2x faster for FA-2 and 'Up to 2x faster than FA-2' for FA-3, which contradicts the claim's specific figures.; The source supports the speedups for FlashAttention-1 and FlashAttention-2 but does not mention FlashAttention-3 or its specific speedup with FP16.; The source mentions a 2x speedup for Flash Attention 2 but does not provide the specific speedup figures (2-4x, 3x, 1.5-2.0x) claimed for Flash Attention 1, 2, or 3.; The source supports a 2x speedup for FlashAttention-2 but does not mention the specific 3x speedup for FlashAttention-2 or the figures for FlashAttention-1 and FlashAttention-3.; The passages mention general speedups (up to 3-4x) or speedups for sparse variants (1.8x-3.3x), but do not provide the specific version-dependent speedup figures claimed.; The source supports the speedup for FlashAttention-3 with FP16 but does not mention the specific speedup figures for FlashAttention-1 or FlashAttention-2."
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "before": {
+    "claims": 35,
+    "uncited": 0,
+    "supported": 32,
+    "partial": 3,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.914,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 34,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 4,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "From the entry point inherited from the layer above, the algorithm explores a specified number of candidate neighbors, controlled by the `ef_search` parameter .",
+      "after": "",
+      "reason": "The source specifies that ef_search controls the exploration of candidates only during the final search at layer 0, not the entire traversal from the entry point.; the model's quote is not in the source: The passage states that the size of the candidate priority queue, which tracks nearest neighbors, is controlled by the ef_search parameter.; the decider doubts it (p 0.01, confidence 0.90); The passages describe the search starting from an entry point and descending through layers, where the final search explores candidates controlled by ef_search."
+    },
+    {
+      "action": "cited",
+      "before": "Similarly, a larger `ef_search` value generally leads to higher accuracy but longer search times .",
+      "after": "Similarly, a larger `ef_search` value generally leads to higher accuracy but longer search times [11].",
+      "reason": "The passage explicitly states that increasing search parameters like efSearch leads to a trade-off involving higher computational costs and increased query latency."
+    },
+    {
+      "action": "cited",
+      "before": "This synchronous index building can slow down data ingestion .",
+      "after": "This synchronous index building can slow down data ingestion [1].",
+      "reason": "The source explicitly states that rebuilding a large HNSW index is expensive and very slow."
+    }
+  ]
+}

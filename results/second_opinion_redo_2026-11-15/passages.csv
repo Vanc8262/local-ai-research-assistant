@@ -1,0 +1,22 @@
+question,mode,run,run_id,decider,doubted_before,doubted_now,accuracy_before,removed,rewritten,claims,facts,gate,gate_failures,old_gate,old_gate_failures,old_removed,old_rewritten
+bm25,hybrid,1,20261114-200132-11152f,passages,4,4,0.721,11,1,33,1.0,fail,accuracy_before changed_share changed_count,fail,accuracy_before changed_share changed_count,11,1
+hnsw,hybrid,1,20261114-203615-7f421e,passages,2,2,0.943,0,0,35,1.0,pass,,pass,,0,0
+flash-attention,hybrid,1,20261114-210321-007076,passages,1,1,0.966,1,0,28,1.0,pass,,pass,,1,0
+kv-cache,hybrid,1,20261114-215620-c3eac7,passages,6,5,0.974,0,1,38,0.333,fail,facts,fail,facts,2,0
+speculative-decoding,hybrid,1,20261114-222155-434766,passages,2,2,0.973,2,0,36,1.0,pass,,pass,,2,0
+moe-routing,hybrid,1,20261114-224628-c52e15,passages,1,3,0.97,0,1,33,1.0,pass,,pass,,0,1
+dpo,local,1,20261114-230228-f6798e,passages,1,1,0.95,1,0,19,0.75,pass,,pass,,1,0
+dpo,hybrid,1,20261114-230755-1c0b95,passages,19,19,0.979,1,0,48,1.0,pass,,pass,,1,0
+react-pattern,hybrid,1,20261114-234239-958fee,passages,3,3,0.976,2,0,40,1.0,pass,,pass,,2,0
+free-threaded-python,hybrid,1,20261115-000745-ede4e5,passages,3,3,1.0,0,0,41,1.0,pass,,pass,,0,0
+pandas-arrow,hybrid,1,20261115-002819-45fc9a,passages,1,1,0.941,0,1,34,0.667,fail,facts,fail,facts,0,1
+polars-lazy,local,1,20261115-004030-f9d769,passages,2,2,0.815,1,0,27,1.0,pass,,pass,,1,0
+polars-lazy,hybrid,1,20261115-004637-092e1a,passages,8,8,1.0,1,0,44,1.0,pass,,pass,,1,0
+cap-theorem,hybrid,1,20261115-011758-effac5,passages,6,7,0.977,1,0,43,0.75,pass,,pass,,1,0
+k8s-hpa,hybrid,1,20261115-013800-03c2a3,passages,2,2,0.919,1,1,36,0.75,pass,,pass,,1,1
+terraform-state,hybrid,1,20261115-020006-94ad4c,passages,7,7,0.95,2,1,39,1.0,pass,,pass,,2,1
+shap,hybrid,1,20261115-022350-348ead,passages,3,3,0.944,1,0,35,1.0,pass,,pass,,1,0
+k-fold-cv,hybrid,1,20261115-024608-e07dbc,passages,2,1,0.949,0,0,39,0.667,fail,facts,fail,facts,0,0
+hyde,local,1,20261115-030530-c4d8b3,passages,1,1,0.846,2,0,11,0.667,fail,changed_share facts,fail,changed_share facts,2,0
+cross-encoder-rerank,hybrid,1,20261115-032938-71a1c3,passages,4,4,0.971,1,0,34,1.0,pass,,pass,,1,0
+gptq-awq,hybrid,1,20261115-035545-e43ced,passages,5,5,0.962,1,0,26,1.0,pass,,pass,,1,0

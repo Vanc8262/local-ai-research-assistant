@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 41,
+    "uncited": 1,
+    "supported": 40,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.976,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 6,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 41,
+    "uncited": 0,
+    "supported": 41,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 6,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "cited",
+      "before": "In summary, Terraform state is its memory of your infrastructure, and state locking is an essential coordination mechanism that protects this shared record from corruption and inconsistency when multiple operations interact with it.",
+      "after": "In summary, Terraform state is its memory of your infrastructure, and state locking is an essential coordination mechanism that protects this shared record from corruption and inconsistency when multiple operations interact with it [4].",
+      "reason": "The source explains that state is shared mutable data and locking is necessary to prevent race conditions and inconsistency when multiple operations interact with it."
+    }
+  ]
+}

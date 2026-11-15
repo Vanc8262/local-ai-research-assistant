@@ -1,0 +1,48 @@
+{
+  "before": {
+    "claims": 39,
+    "uncited": 0,
+    "supported": 36,
+    "partial": 3,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.923,
+    "dangling_citations": 0,
+    "doubted": 2,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 39,
+    "uncited": 0,
+    "supported": 39,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 1,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "cited",
+      "before": "Mathematically, if $D$ is the dataset split into $K$ folds ($F_k$), for each fold $k$, the training set is $D_{\\text{train}}^{(k)} = D \\setminus F_k$ and the test set is $D_{\\text{test}}^{(k)} = F_k$.",
+      "after": "Mathematically, if $D$ is the dataset split into $K$ folds ($F_k$), for each fold $k$, the training set is $D_{\\text{train}}^{(k)} = D \\setminus F_k$ and the test set is $D_{\\text{test}}^{(k)} = F_k$ [8].",
+      "reason": "The source describes the process of using one fold for evaluation and the remaining folds for training, which matches the mathematical definition provided."
+    },
+    {
+      "action": "cited",
+      "before": "All observations in the dataset are used for both training and validation, and each observation is used for validation exactly once .",
+      "after": "All observations in the dataset are used for both training and validation, and each observation is used for validation exactly once [11].",
+      "reason": "The source explains that data is partitioned into folds where each fold serves as both training and validation, and each fold is used for validation exactly once."
+    },
+    {
+      "action": "cited",
+      "before": "Overfitting occurs when a model learns the training data too well, including its noise, and consequently performs poorly on new data .",
+      "after": "Overfitting occurs when a model learns the training data too well, including its noise, and consequently performs poorly on new data [8].",
+      "reason": "The source explicitly defines overfitting as learning noise and performing poorly on new data."
+    }
+  ]
+}

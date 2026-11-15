@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 38,
+    "uncited": 1,
+    "supported": 37,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.974,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 7,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 37,
+    "uncited": 0,
+    "supported": 37,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 7,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "This \"lossless\" property means speedups come without any sacrifice in quality.",
+      "after": "",
+      "reason": "no likely source supports it"
+    }
+  ]
+}

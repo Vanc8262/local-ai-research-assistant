@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 13,
+    "uncited": 0,
+    "supported": 12,
+    "partial": 1,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.923,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 12,
+    "uncited": 0,
+    "supported": 12,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "It incurs a 25–40% increase in response time and a non-negligible hallucination rate when retrieving personal data .",
+      "after": "",
+      "reason": "source does not mention 40%; The source explicitly states that HyDE incurs a 25-40% increase in response time and a non-negligible hallucination rate during personal-data retrieval."
+    }
+  ]
+}

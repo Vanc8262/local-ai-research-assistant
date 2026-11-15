@@ -1,0 +1,29 @@
+{
+  "before": {
+    "claims": 20,
+    "uncited": 0,
+    "supported": 20,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 20,
+    "uncited": 0,
+    "supported": 20,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 0,
+    "decider_errors": 0
+  },
+  "changes": []
+}
