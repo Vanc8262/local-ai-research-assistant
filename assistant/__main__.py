@@ -22,6 +22,8 @@
     python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
     python -m assistant referee runs/eval-<id> --bench evals/bench_v1.toml
                                                             judge an eval's reports with the pinned referee
+    python -m assistant referee calibrate sample|spot|agree|run ...
+                                                            the referee's calibration set: sample, spot-check, compare, score
     python -m assistant claims sample runs/eval-<id> ...    sample checker verdicts to label by hand
     python -m assistant claims score results/claim_sample.csv   false-pass and false-removal rates from the labels
     python -m assistant decide probe [-t local]             which decision method works on a local tier
@@ -48,7 +50,7 @@ from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
-from . import claim_sample
+from . import calibration, claim_sample
 from .evaluate import MODES, RUNS, load_questions, reload_model, rescore, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
@@ -56,10 +58,10 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
-from .bench_spec import BenchSpecError, candidate_key, check_referee_pin, load_bench
+from .bench_spec import REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, load_bench
 from .ledger import DEFAULT_LEDGER, RetestLimit, check_attempt, finish_attempt, record_attempt
 from .manifest import REPO_ROOT, _git, sha256_file
-from .referee import score_eval
+from .referee import PROMPT_VERSION, score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
 
@@ -504,7 +506,9 @@ def cmd_rescore(settings, args) -> int:
 
 def cmd_referee(settings, args) -> int:
     """Judge the finished eval's reports with the pinned referee (README: research bench)."""
-    eval_dir = Path(args.eval_dir)
+    if args.words[0] == "calibrate":
+        return cmd_calibrate(settings, args)
+    eval_dir = Path(args.words[0])
     log = RunLog(settings.runs_dir, task=f"referee {eval_dir.name}")
     gateway = Gateway(settings, log)
     try:
@@ -520,6 +524,76 @@ def cmd_referee(settings, args) -> int:
     if incomplete:
         print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some referee judgements failed.")
     return 0 if rows and not incomplete else 1
+
+
+def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool) -> None:
+    """results/calibration_v1_<tier>.md: both recalls with intervals, the verdict, and what pins them."""
+    sha = os.environ.get(spec.referee.gguf_env, "")
+    lines = [f"# Referee calibration: {tier}", "", f"**{'PASS' if passed else 'FAIL'}**", ""]
+    for label, minimum in (("supported", spec.referee.min_supported_recall),
+                           ("not_supported", spec.referee.min_not_supported_recall)):
+        hits, total, interval = result[label]
+        rate = f"{hits / total:.3f}" if total else "n/a"
+        ci = f"; 95% interval {interval[0]:.3f} to {interval[1]:.3f}" if interval else ""
+        lines.append(f"- {label} recall: {hits} of {total} = {rate}{ci}; minimum {minimum} "
+                     f"({'pass' if total and hits / total >= minimum else 'fail'})")
+    lines += [f"- labelled unclear (excluded): {result['unclear_labels']}", f"- prompt version: {PROMPT_VERSION}"]
+    if sha:
+        lines.append(f"- referee GGUF sha256: {sha256_file(Path(sha))}")
+    lines += ["", REFEREE_CAVEAT]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def cmd_calibrate(settings, args) -> int:
+    """referee calibrate sample|spot|agree|run (README: research bench)."""
+    action, rest = (args.words[1] if len(args.words) > 1 else ""), args.words[2:]
+    if action not in ("sample", "spot", "agree", "run") or not rest:
+        print("Usage: referee calibrate sample <eval dirs> | spot <csv> | agree <claude csv> <van csv> | run <csv>")
+        return 2
+    try:
+        if action == "sample":
+            spec = load_bench(args.bench)
+            dev_ids = set()
+            for path in spec.questions.get("dev", []):
+                dev_ids |= {q.id for q in load_questions(path)}
+            out = Path(args.out or "results/calibration_v1.csv")
+            rows = calibration.sample_pairs([Path(p) for p in rest], out, dev_ids, runs_dir=settings.runs_dir)
+            print(f"Sampled {len(rows)} pairs into {out}. Fill `label` (supported, not_supported, unclear) and `labeller`.")
+            return 0 if rows else 1
+        if action == "spot":
+            out = Path(args.out or "results/calibration_v1_spot.csv")
+            rows = calibration.spot_check(Path(rest[0]), out)
+            print(f"Wrote {len(rows)} pairs with labels blanked to {out}, for Van to label.")
+            return 0 if rows else 1
+        if action == "agree":
+            if len(rest) != 2:
+                print("Name two CSVs: Claude's labels, then Van's")
+                return 2
+            agreeing, compared = calibration.agreement(Path(rest[0]), Path(rest[1]))
+            print(f"Van disagrees on {compared - agreeing} of {compared}")
+            return 1 if compared - agreeing > 3 else 0
+        spec = load_bench(args.bench)
+        tier = args.tier or spec.referee.tier
+        log = RunLog(settings.runs_dir, task=f"referee calibrate {tier}")
+        gateway = Gateway(settings, log)
+        try:
+            rows = calibration.judge_pairs(Path(rest[0]), settings.runs_dir, gateway, tier)
+        finally:
+            gateway.close()
+    except (BenchSpecError, ValueError, OSError) as exc:
+        print(f"Calibration refused: {exc}")
+        return 1
+    result = calibration.recall(rows)
+    passed = calibration.meets(result, spec)
+    report = Path("results") / f"calibration_v1_{tier}.md"
+    _calibration_report(report, tier, spec, result, passed)
+    for label in ("supported", "not_supported"):
+        hits, total, interval = result[label]
+        print(f"{label} recall: {hits} of {total}" + (f" (95% interval {interval[0]:.2f} to {interval[1]:.2f})" if interval else ""))
+    print("PASS" if passed else "FAIL", f"against the spec minimums. Saved: {report}")
+    print(REFEREE_CAVEAT)
+    return 0 if passed else 1
 
 
 def cmd_claims(settings, args) -> int:
@@ -719,8 +793,11 @@ def main(argv: list[str] | None = None) -> int:
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
     again.add_argument("--questions", default="evals/research_questions.toml")
     ref = sub.add_parser("referee", help="judge a finished eval's reports with the pinned bench referee")
-    ref.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261115-...")
+    ref.add_argument("words", nargs="+", help="an eval folder, e.g. runs/eval-20261115-..., or: calibrate "
+                     "sample|spot|agree|run ...")
     ref.add_argument("--bench", default="evals/bench_v1.toml")
+    ref.add_argument("--out", help="calibrate sample|spot: the CSV to write")
+    ref.add_argument("--tier", help="calibrate run: the tier to judge with (default: the spec's referee tier)")
     snap = evaluate.add_mutually_exclusive_group()
     snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
     snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")

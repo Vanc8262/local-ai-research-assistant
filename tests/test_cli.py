@@ -204,3 +204,32 @@ def test_cli_referee_pin_error_exits_1(run, monkeypatch, tmp_path, capsys):
     monkeypatch.delenv("REFEREE_GGUF", raising=False)
     assert run(SUPPORTED, "referee", str(eval_dir), "--bench", "evals/bench_v1.toml") == 1
     assert "REFEREE_GGUF" in capsys.readouterr().out
+
+
+def _labels(path, labels):
+    path.write_text("pair_id,label\n" + "".join(f"{k},{v}\n" for k, v in labels.items()), encoding="utf-8")
+    return str(path)
+
+
+@pytest.mark.parametrize("flips, code", [(3, 0), (4, 1)])
+def test_cli_calibrate_agree_exit_codes(run, tmp_path, capsys, flips, code):
+    ids = {f"p{i}": "supported" for i in range(25)}
+    van = {k: ("not_supported" if i < flips else "supported") for i, k in enumerate(ids)}
+    assert run(SUPPORTED, "referee", "calibrate", "agree", _labels(tmp_path / "c.csv", ids),
+               _labels(tmp_path / "v.csv", van)) == code
+    assert f"Van disagrees on {flips} of 25" in capsys.readouterr().out
+
+
+def test_cli_calibrate_run_writes_report(run, monkeypatch, tmp_path, capsys):
+    from pathlib import Path
+    from assistant import calibration
+    rows = ([{"label": "supported", "referee_verdict": "supported"}] * 19 + [{"label": "supported", "referee_verdict": "not_supported"}]
+            + [{"label": "not_supported", "referee_verdict": "not_supported"}] * 9 + [{"label": "not_supported", "referee_verdict": "supported"}])
+    monkeypatch.setattr(calibration, "judge_pairs", lambda *a, **k: rows)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("REFEREE_GGUF", raising=False)
+    bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
+    assert run(SUPPORTED, "referee", "calibrate", "run", "x.csv", "--bench", str(bench)) == 0
+    text = (tmp_path / "results" / "calibration_v1_referee.md").read_text(encoding="utf-8")
+    assert "PASS" in text and "95% interval" in text and "not that every sentence is true" in text
+    assert "PASS" in capsys.readouterr().out
