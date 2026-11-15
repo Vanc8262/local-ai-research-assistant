@@ -201,7 +201,8 @@ def _referee_sha256(spec: BenchSpec, env, hasher) -> str:
 
 
 def _earlier_summary(run_dir: Path, spec: BenchSpec, sha: str) -> dict | None:
-    """The run's referee.json summary when the same prompt version and referee file made it."""
+    """The run's referee.json summary when the same prompt version and referee file made it and
+    every judgement was made (an incomplete one is judged again)."""
     path = run_dir / "referee.json"
     if not path.is_file():
         return None
@@ -209,7 +210,7 @@ def _earlier_summary(run_dir: Path, spec: BenchSpec, sha: str) -> dict | None:
         summary = json.loads(path.read_text(encoding="utf-8"))["summary"]
     except (ValueError, KeyError):
         return None
-    same = summary.get("prompt_version") == spec.referee.prompt_version and summary.get("referee_sha256") == sha
+    same = summary.get("complete") is True and summary.get("prompt_version") == spec.referee.prompt_version and summary.get("referee_sha256") == sha
     return summary if same else None
 
 

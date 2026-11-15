@@ -181,7 +181,9 @@ def test_eval_exits_0_only_when_every_run_passes(run, monkeypatch, tmp_path, row
     assert run(SUPPORTED, "eval", "--questions", str(questions), "--mode", "local") == code
 
 
-@pytest.mark.parametrize("rows, code", [([{"run_id": "r1"}], 0), ([], 1)])
+@pytest.mark.parametrize("rows, code", [([{"run_id": "r1", "complete": True}], 0),
+                                    ([{"run_id": "r1", "complete": True}, {"run_id": "r2", "complete": False}], 1),
+                                    ([], 1)])
 def test_cli_referee_exit_codes(run, monkeypatch, tmp_path, rows, code):
     eval_dir = tmp_path / "runs" / "eval-1"
     eval_dir.mkdir()

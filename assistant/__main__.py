@@ -336,7 +336,10 @@ def cmd_referee(settings, args) -> int:
         gateway.close()
     print((eval_dir / "referee.md").read_text(encoding="utf-8"))
     print(f"Saved: {eval_dir / 'referee.csv'}")
-    return 0 if rows else 1
+    incomplete = [r for r in rows if not r.get("complete")]
+    if incomplete:
+        print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some referee judgements failed.")
+    return 0 if rows and not incomplete else 1
 
 
 def cmd_claims(settings, args) -> int:

@@ -1,13 +1,16 @@
 """Referee scoring of a saved run folder, with a scripted fake gateway (no model, no network)."""
+import csv
 import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
+import pytest
 
-from assistant.bench_spec import REFEREE_CAVEAT
+from assistant.bench_spec import REFEREE_CAVEAT, BenchSpecError, load_bench
+from assistant.config import Settings
 from assistant.evaluate import Question
-from assistant.referee import Judgement, judge, score_run, statement_verdict, statements
+from assistant.referee import Judgement, judge, score_eval, score_run, statement_verdict, statements
 
 PAGE = ("BM25 uses term frequency to rank documents. It also applies saturation so that repeated "
         "terms add less and less to the score of a document.")
@@ -217,13 +220,6 @@ def test_two_sources_one_statement(tmp_path):
 
 # ---- score_eval: a whole eval folder ----
 
-import csv  # noqa: E402
-
-import pytest  # noqa: E402
-
-from assistant.bench_spec import BenchSpecError, load_bench  # noqa: E402
-from assistant.config import Settings  # noqa: E402
-from assistant.referee import score_eval  # noqa: E402
 
 BENCH = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
 
@@ -298,3 +294,14 @@ def test_score_eval_unknown_question_id(tmp_path):
     (tmp_path / "qs.toml").write_text('[[question]]\nid = "other"\ntext = "x"\n', encoding="utf-8")
     with pytest.raises(BenchSpecError, match="'q'"):
         score_eval(eval_dir, spec, settings, FakeGateway([]), env=env, reloader=lambda *a: None)
+
+
+def test_score_eval_judges_an_incomplete_run_again(tmp_path):
+    eval_dir, spec, settings, env = eval_folder(tmp_path)
+    reply = verdict("supported", "BM25 uses term frequency to rank documents")
+    first = FakeGateway([SimpleNamespace(content="", error="boom")] * 2)
+    rows = score_eval(eval_dir, spec, settings, first, env=env, reloader=lambda *a: None)
+    assert rows[0]["complete"] is False
+    again = FakeGateway([reply])
+    rows = score_eval(eval_dir, spec, settings, again, env=env, reloader=lambda *a: None)
+    assert again.calls == 1 and rows[0]["complete"] is True
