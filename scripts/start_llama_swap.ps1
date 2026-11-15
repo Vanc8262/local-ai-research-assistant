@@ -33,7 +33,14 @@ $env:NOMIC_GGUF = Find-One $Models "*nomic-embed-text-v1.5*.gguf" "nomic-embed-t
 
 # The bench referee is optional: set REFEREE_GGUF to its file before starting (it is passed through
 # to llama-swap as is); `assistant referee` checks it against the pin in evals\bench_v1.toml.
-if ($env:REFEREE_GGUF) {
+# llama-swap fills in ${env.X} across the whole config and refuses to load it when any X is unset,
+# so without a referee the variable still needs a value: a path that does not exist. Only a request
+# for the referee then fails (llama-server cannot open it); the other models load as usual. It must
+# not be "": assigning an empty string deletes the variable in PowerShell.
+if (-not $env:REFEREE_GGUF) {
+    $env:REFEREE_GGUF = Join-Path $Models "no-referee-set.gguf"
+    Write-Host "Referee: not set (REFEREE_GGUF points at the placeholder $env:REFEREE_GGUF)"
+} else {
     if (-not (Test-Path $env:REFEREE_GGUF)) { throw "REFEREE_GGUF does not exist: $env:REFEREE_GGUF" }
     Write-Host "Referee: $env:REFEREE_GGUF"
 }

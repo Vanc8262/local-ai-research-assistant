@@ -389,3 +389,34 @@ def test_manifest_has_bench_block(tmp_path):
     plain, _ = run_eval(settings_for(tmp_path), [Question(id="py", text="q")], ["local"],
                         runner=[sys.executable, str(script)], transport=transport([]), runs=1)
     assert "bench" not in json.loads((plain / "manifest.json").read_text(encoding="utf-8"))
+
+
+def _assigned_on_every_path(script: str, var: str) -> bool:
+    """True when start_llama_swap.ps1 sets $env:<var> unconditionally (an unindented assignment), or
+    in an `if (-not $env:<var>) { ... $env:<var> = ... }` block, so it is set whichever way the script goes."""
+    import re
+    if re.search(rf"^\$env:{var}\s*=", script, flags=re.M):
+        return True
+    guard = re.search(rf"^if \(-not \$env:{var}\) \{{(.*?)^\}}", script, flags=re.M | re.S)
+    return bool(guard and re.search(rf"^\s+\$env:{var}\s*=\s*\S", guard.group(1), flags=re.M))
+
+
+def test_every_env_macro_in_the_llama_swap_config_is_set_by_the_start_script():
+    """llama-swap substitutes ${env.X} across the whole file and refuses to load the config when X is
+    unset, so a missing REFEREE_GGUF would stop every model, not just the referee."""
+    import re
+    config = (ROOT / "services" / "llama-swap" / "config.yaml").read_text(encoding="utf-8")
+    script = (ROOT / "scripts" / "start_llama_swap.ps1").read_text(encoding="utf-8")
+    used = set(re.findall(r"\$\{env\.([A-Z0-9_]+)\}", config))
+    assert {"LLAMA_SERVER", "GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF", "REFEREE_GGUF"} <= used
+    assert [var for var in sorted(used) if not _assigned_on_every_path(script, var)] == []
+
+
+def test_the_referee_placeholder_is_a_non_empty_path():
+    """An empty string would delete the variable in PowerShell; the placeholder must be a path."""
+    import re
+    script = (ROOT / "scripts" / "start_llama_swap.ps1").read_text(encoding="utf-8")
+    guard = re.search(r"^if \(-not \$env:REFEREE_GGUF\) \{(.*?)^\}", script, flags=re.M | re.S)
+    assert guard, "the script must give REFEREE_GGUF a placeholder when it is unset"
+    (value,) = re.findall(r"^\s+\$env:REFEREE_GGUF\s*=\s*(.+)$", guard.group(1), flags=re.M)
+    assert value.strip() not in ('""', "''", "$null") and ".gguf" in value
