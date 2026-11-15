@@ -16,6 +16,9 @@
     python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
+    python -m assistant eval --bench evals/bench_v1.toml --candidate gemma-e4b --split dev|test
+                                                            a research bench run of one candidate; the test
+                                                            split is capped and logged in results/bench_ledger.csv
     python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
     python -m assistant referee runs/eval-<id> --bench evals/bench_v1.toml
                                                             judge an eval's reports with the pinned referee
@@ -34,7 +37,9 @@ Without --public a prompt counts as private and is refused by cloud tiers.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import httpx
@@ -44,14 +49,16 @@ from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
 from . import claim_sample
-from .evaluate import MODES, load_questions, reload_model, rescore, run_eval
+from .evaluate import MODES, RUNS, load_questions, reload_model, rescore, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
-from .runlog import RunLog, read_run
+from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
-from .bench_spec import BenchSpecError, load_bench
+from .bench_spec import BenchSpecError, candidate_key, check_referee_pin, load_bench
+from .ledger import RetestLimit, check_attempt, finish_attempt, record_attempt
+from .manifest import _git, sha256_file
 from .referee import score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
@@ -300,20 +307,135 @@ def _exit_code(summary: dict) -> int:
 
 
 def cmd_eval(settings, args) -> int:
+    if args.bench:
+        try:
+            plan = _bench_plan(settings, args)
+        except (BenchRefused, BenchSpecError, RetestLimit) as exc:
+            print(f"Eval refused: {exc}")
+            return 2
+        return _bench_eval(settings, args, plan)
+    if args.candidate or args.split:
+        print("Eval refused: --candidate and --split need --bench (e.g. --bench evals/bench_v1.toml)")
+        return 2
     if args.no_tavily:   # the fully local gate: no keyed search service at all
         settings.research.tavily_fallback = False
-    questions = load_questions(args.questions)
+    questions_path = args.questions or "evals/research_questions.toml"
+    questions = load_questions(questions_path)
     if args.only:
         questions = [q for q in questions if q.id in args.only]
     # offline mode runs by default only once Kiwix copies are configured
     modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
     out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
-                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions,
-                              snapshot_dir=args.record_search or args.replay_search,
-                              snapshot_mode="replay" if args.replay_search else "record")
+                              reload=not args.no_reload, runs=RUNS if args.runs is None else args.runs,
+                              questions_path=questions_path, **_snapshot_options(args))
+    return _eval_result(out_dir, rows)
+
+
+class BenchRefused(Exception):
+    """A bench run that must not start; the message says why."""
+
+
+BENCH_MODES = ("local", "hybrid")   # the candidate, and Gemini as a reference row
+
+
+def _snapshot_options(args) -> dict:
+    return {"snapshot_dir": args.record_search or args.replay_search,
+            "snapshot_mode": "replay" if args.replay_search else "record"}
+
+
+def _eval_result(out_dir: Path, rows: list[dict]) -> int:
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
+
+
+def _bench_plan(settings, args) -> dict:
+    """Everything a bench run needs, or BenchRefused. The spec sets the questions, runs and Tavily
+    setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen
+    spec, a clean tree at a commit (the candidate key names it), the candidate's GGUF, the pinned
+    referee, and room under the retest cap."""
+    for flag, value in (("--questions", args.questions), ("--runs", args.runs)):
+        if value is not None:
+            raise BenchRefused(f"{flag} comes from the bench spec; leave it out with --bench")
+    if not args.candidate:
+        raise BenchRefused("--bench needs --candidate <name>, one of the spec's [candidates]")
+    spec = load_bench(args.bench)
+    ref = spec.candidates.get(args.candidate)
+    if ref is None:
+        raise BenchRefused(f"unknown candidate {args.candidate!r}; {args.bench} has: {', '.join(spec.candidates)}")
+    tier = settings.tiers.get(ref.tier)
+    if tier is None or tier.kind != "local":
+        raise BenchRefused(f"candidate {args.candidate!r} runs on tier {ref.tier!r}, which is not a local tier in "
+                           f"{args.config}")
+    other = [m for m in args.mode or [] if m not in BENCH_MODES]
+    if other:
+        raise BenchRefused(f"with --bench only local mode runs, plus hybrid as a reference row; not {', '.join(other)}")
+    if spec.search != MODES["local"][1]:
+        raise BenchRefused(f"the spec's search {spec.search!r} is not the local mode's {MODES['local'][1]!r}")
+    split = args.split or "dev"
+    test = split == "test"
+    if test and (args.only or args.verify_tier):
+        raise BenchRefused("the test split runs the whole spec with the candidate as checker: "
+                           "leave out --only and --verify-tier")
+    if test and not spec.frozen:
+        raise BenchRefused(f"the test split needs a frozen bench spec (frozen = true in {args.bench}); "
+                           "use --split dev until then")
+    files = spec.questions.get(split) or []
+    missing = [f for f in files if not Path(f).is_file()]
+    if not files or missing:
+        raise BenchRefused(f"{split} question files missing: {', '.join(missing) or 'none listed in the spec'}")
+    questions = [q for f in files for q in load_questions(f)]
+    if args.only:
+        questions = [q for q in questions if q.id in args.only]
+    commit = _git("rev-parse", "HEAD")
+    if test and not commit:
+        raise BenchRefused("the test split needs a git commit to name in the candidate key")
+    if test and _git("status", "--porcelain", "--untracked-files=no"):
+        raise BenchRefused("the git tree has uncommitted changes; commit them first (the candidate key names "
+                           f"the commit), including {args.ledger} after an earlier attempt")
+    gguf, gguf_sha = os.environ.get(ref.gguf_env, ""), ""
+    if gguf and Path(gguf).is_file():
+        gguf_sha = sha256_file(Path(gguf))
+    elif test:
+        raise BenchRefused(f"candidate GGUF: environment variable {ref.gguf_env} is not set" if not gguf else
+                           f"candidate GGUF: file from {ref.gguf_env} does not exist: {gguf}")
+    key = candidate_key(gguf_sha, commit, tier)
+    if test:
+        check_referee_pin(spec, os.environ)
+        check_attempt(Path(args.ledger), spec.version, gguf_sha, key)
+    modes = ["local"] + (["hybrid"] if "hybrid" in (args.mode or []) else [])
+    return {"spec": spec, "tier": ref.tier, "questions": questions, "modes": modes, "test": test,
+            "commit": commit, "bench": {"version": spec.version, "split": split, "candidate": args.candidate,
+                                        "candidate_key": key, "candidate_gguf_sha256": gguf_sha}}
+
+
+def _bench_eval(settings, args, plan: dict) -> int:
+    """Run the candidate. On the test split the attempt goes in the ledger before the first
+    question, and is marked "error" if the eval raises or any run has no checked report; the
+    referee (`assistant referee`) decides passed or missed later."""
+    spec, bench, ledger = plan["spec"], plan["bench"], Path(args.ledger)
+    settings.research.tavily_fallback = spec.tavily_fallback and not args.no_tavily
+    eval_id = new_run_id()
+    attempt = f"eval-{eval_id}"
+    if plan["test"]:
+        record_attempt(ledger, {"bench_version": spec.version, "candidate": bench["candidate"],
+                                "candidate_key": bench["candidate_key"], "gguf_sha256": bench["candidate_gguf_sha256"],
+                                "git_commit": plan["commit"], "split": "test", "eval_id": attempt,
+                                "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+    try:
+        out_dir, rows = run_eval(settings, plan["questions"], plan["modes"], verify_tier=args.verify_tier,
+                                 reload=not args.no_reload, runs=spec.runs, candidate_tier=plan["tier"],
+                                 bench=bench, eval_id=eval_id, **_snapshot_options(args))
+    except BaseException:   # a crash or Ctrl-C still used up the attempt
+        if plan["test"]:
+            finish_attempt(ledger, attempt, "error")
+        raise
+    if plan["test"] and (not rows or any(r.get("outcome") != "ok" for r in rows)):
+        finish_attempt(ledger, attempt, "error")
+    code = _eval_result(out_dir, rows)
+    if plan["test"]:
+        print(f"Test attempt {attempt} is in {ledger}; commit that file.")
+    return code
 
 
 def cmd_rescore(settings, args) -> int:
@@ -519,15 +641,22 @@ def main(argv: list[str] | None = None) -> int:
     mend.add_argument("--reload-every", type=int, default=0, metavar="N",
                       help="reload the local model in LM Studio every N model calls (long reports)")
     evaluate = sub.add_parser("eval", help="run the research eval: each question researched, verified and repaired")
-    evaluate.add_argument("--questions", default="evals/research_questions.toml")
+    evaluate.add_argument("--questions", default=None, help="default: evals/research_questions.toml")
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
-    evaluate.add_argument("--runs", type=int, default=2, help="runs per question and mode (default 2)")
+    evaluate.add_argument("--runs", type=int, default=None, help="runs per question and mode (default 2)")
     evaluate.add_argument("--no-tavily", action="store_true",
                           help="never fall back to Tavily, even for these public questions")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
+    evaluate.add_argument("--bench", default=None, metavar="SPEC",
+                          help="run a research bench candidate; questions, runs and Tavily come from the spec")
+    evaluate.add_argument("--candidate", default=None, help="with --bench: a name from the spec's [candidates]")
+    evaluate.add_argument("--split", choices=("dev", "test"), default=None,
+                          help="with --bench: dev (default; free, not logged) or test (frozen spec, capped, logged)")
+    evaluate.add_argument("--ledger", default="results/bench_ledger.csv",
+                          help="with --bench: the committed record of test-split attempts")
     again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
     again.add_argument("--questions", default="evals/research_questions.toml")

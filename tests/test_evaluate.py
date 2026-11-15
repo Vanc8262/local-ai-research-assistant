@@ -335,3 +335,57 @@ def test_claim_sample_draws_passed_and_removed_claims_and_scores_labels(tmp_path
     assert (result["passed"]["wrong"], result["passed"]["labelled"]) == (0, 1)
     assert (result["removed"]["wrong"], result["removed"]["labelled"]) == (0, 1)
     assert "False passes" in claim_sample.score_markdown(result)
+
+
+def model_transport(models: list):
+    """transport() that also records the model each local model request names."""
+    inner = transport([])
+
+    def handler(request):
+        if request.url.host == "localhost":
+            body = json.loads(request.content)
+            models.append(("decide" if body.get("logprobs") else "chat", body["model"]))
+        return inner.handle_request(request)
+    return httpx.MockTransport(handler)
+
+
+def test_candidate_tier_used_for_writer_and_checker(tmp_path):
+    settings = settings_for(tmp_path)
+    settings.tiers["cand"] = Tier(name="cand", kind="local", base_url="http://localhost/v1", model="cand")
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    models = []
+    question = Question(id="py", text="What is new in Python 3.15?", expect=[["lazy import"]])
+    _, (row,) = run_eval(settings, [question], ["local"], runner=[sys.executable, str(script)],
+                         transport=model_transport(models), runs=1, candidate_tier="cand")
+    assert row["outcome"] == "ok" and row["gate"] == "pass"
+    # the proxy call from the writer, the six claim checks and the decider's second opinions
+    assert {kind for kind, _ in models} == {"chat", "decide"} and len(models) > 7
+    assert {model for _, model in models} == {"cand"}
+
+
+def test_candidate_tier_does_not_take_over_an_explicit_verify_tier(tmp_path):
+    settings = settings_for(tmp_path)
+    settings.tiers["cand"] = Tier(name="cand", kind="local", base_url="http://localhost/v1", model="cand")
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    models = []
+    run_eval(settings, [Question(id="py", text="q")], ["local"], runner=[sys.executable, str(script)],
+             transport=model_transport(models), runs=1, candidate_tier="cand", verify_tier="local")
+    assert models[0] == ("chat", "cand") and {model for _, model in models[1:]} == {"gemma"}
+
+
+def test_manifest_has_bench_block(tmp_path):
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FAKE_LDR, encoding="utf-8")
+    bench = {"version": 1, "split": "dev", "candidate": "gemma-e4b", "candidate_key": "abc-def-123",
+             "candidate_gguf_sha256": "f" * 64}
+    out_dir, _ = run_eval(settings_for(tmp_path), [Question(id="py", text="q")], ["local"],
+                          runner=[sys.executable, str(script)], transport=transport([]), runs=1,
+                          candidate_tier="local", bench=bench, eval_id="20261115-000000-abcdef")
+    assert out_dir.name == "eval-20261115-000000-abcdef"
+    manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest["bench"] == bench
+    plain, _ = run_eval(settings_for(tmp_path), [Question(id="py", text="q")], ["local"],
+                        runner=[sys.executable, str(script)], transport=transport([]), runs=1)
+    assert "bench" not in json.loads((plain / "manifest.json").read_text(encoding="utf-8"))
