@@ -1,6 +1,6 @@
 # Research bench: a frozen, refereed Stage 2 eval — design
 
-Status: ready for Van's approval, 2026-11-15
+Status: APPROVED by Van, 2026-11-15
 Thread: "Settle a stable Stage 2 eval gate"
 
 ## 1. Intent
