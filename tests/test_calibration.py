@@ -164,3 +164,28 @@ def test_judge_pairs_reads_run_folder(tmp_path):
     assert [r["referee_verdict"] for r in out] == ["supported", "not_supported"]
     assert calls == [("referee", True)]
     assert sorted(p.name for p in (tmp_path / "r1").iterdir()) == before
+
+
+def test_judge_pairs_skips_unlabelled_normalises_and_rejects_bad_labels(tmp_path):
+    write_run(tmp_path, "r1", [("Alpha is fast", "supported")])
+    base = {f: "" for f in PAIR_FIELDS} | {"run_id": "r1", "statement": "Alpha is fast", "index": "1"}
+
+    def put(labels):
+        src = tmp_path / "l.csv"
+        with src.open("w", newline="", encoding="utf-8") as h:
+            w = csv.DictWriter(h, fieldnames=PAIR_FIELDS)
+            w.writeheader()
+            w.writerows(base | {"pair_id": f"p{i}", "label": lab} for i, lab in enumerate(labels))
+        return src
+    calls = []
+
+    class GW:
+        def ask(self, tier, messages, **kw):
+            calls.append(1)
+            return SimpleNamespace(content="", error="boom")
+    out = judge_pairs(put([" Supported ", "", "unclear", "NOT_SUPPORTED"]), tmp_path, GW(), "referee")
+    assert [r["label"] for r in out] == ["supported", "not_supported"]
+    assert all(r["referee_error"] for r in out) and recall(out)["referee_errors"] == 2
+    assert len(calls) == 4   # two rows, each asked twice (retry)
+    with pytest.raises(ValueError, match="p1"):
+        judge_pairs(put(["supported", "suported"]), tmp_path, GW(), "referee")

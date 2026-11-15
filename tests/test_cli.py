@@ -227,9 +227,36 @@ def test_cli_calibrate_run_writes_report(run, monkeypatch, tmp_path, capsys):
             + [{"label": "not_supported", "referee_verdict": "not_supported"}] * 9 + [{"label": "not_supported", "referee_verdict": "supported"}])
     monkeypatch.setattr(calibration, "judge_pairs", lambda *a, **k: rows)
     monkeypatch.chdir(tmp_path)
-    monkeypatch.delenv("REFEREE_GGUF", raising=False)
+    gguf = tmp_path / "ref.gguf"
+    gguf.write_bytes(b"gguf")
+    monkeypatch.setenv("REFEREE_GGUF", str(gguf))
     bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
     assert run(SUPPORTED, "referee", "calibrate", "run", "x.csv", "--bench", str(bench)) == 0
     text = (tmp_path / "results" / "calibration_v1_referee.md").read_text(encoding="utf-8")
+    assert cli.sha256_file(gguf) in text and "judgements that failed" in text
     assert "PASS" in text and "95% interval" in text and "not that every sentence is true" in text
     assert "PASS" in capsys.readouterr().out
+
+
+def test_cli_calibrate_run_without_referee_file_judges_nothing(run, monkeypatch, tmp_path, capsys):
+    from pathlib import Path
+    from assistant import calibration
+    called = []
+    monkeypatch.setattr(calibration, "judge_pairs", lambda *a, **k: called.append(1) or [])
+    monkeypatch.delenv("REFEREE_GGUF", raising=False)
+    bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
+    assert run(SUPPORTED, "referee", "calibrate", "run", "x.csv", "--bench", str(bench)) == 1
+    assert not called and "REFEREE_GGUF" in capsys.readouterr().out
+
+
+def test_cli_calibrate_run_bad_label_exits_1(run, monkeypatch, tmp_path, capsys):
+    from pathlib import Path
+    monkeypatch.chdir(tmp_path)
+    gguf = tmp_path / "ref.gguf"
+    gguf.write_bytes(b"gguf")
+    monkeypatch.setenv("REFEREE_GGUF", str(gguf))
+    csv_path = tmp_path / "l.csv"
+    csv_path.write_text("pair_id,run_id,statement,index,label\np007,r1,s,1,suported\n", encoding="utf-8")
+    bench = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
+    assert run(SUPPORTED, "referee", "calibrate", "run", str(csv_path), "--bench", str(bench)) == 1
+    assert "p007" in capsys.readouterr().out

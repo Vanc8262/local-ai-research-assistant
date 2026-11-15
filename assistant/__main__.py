@@ -526,9 +526,8 @@ def cmd_referee(settings, args) -> int:
     return 0 if rows and not incomplete else 1
 
 
-def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool) -> None:
+def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool, sha: str = "") -> None:
     """results/calibration_v1_<tier>.md: both recalls with intervals, the verdict, and what pins them."""
-    sha = os.environ.get(spec.referee.gguf_env, "")
     lines = [f"# Referee calibration: {tier}", "", f"**{'PASS' if passed else 'FAIL'}**", ""]
     for label, minimum in (("supported", spec.referee.min_supported_recall),
                            ("not_supported", spec.referee.min_not_supported_recall)):
@@ -537,9 +536,11 @@ def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool)
         ci = f"; 95% interval {interval[0]:.3f} to {interval[1]:.3f}" if interval else ""
         lines.append(f"- {label} recall: {hits} of {total} = {rate}{ci}; minimum {minimum} "
                      f"({'pass' if total and hits / total >= minimum else 'fail'})")
-    lines += [f"- labelled unclear (excluded): {result['unclear_labels']}", f"- prompt version: {PROMPT_VERSION}"]
+    lines += [f"- labelled unclear (excluded): {result['unclear_labels']}",
+              f"- judgements that failed (gateway or reply errors, counted as misses): {result.get('referee_errors', 0)}",
+              f"- prompt version: {PROMPT_VERSION}"]
     if sha:
-        lines.append(f"- referee GGUF sha256: {sha256_file(Path(sha))}")
+        lines.append(f"- referee GGUF sha256: {sha}")
     lines += ["", REFEREE_CAVEAT]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -575,6 +576,9 @@ def cmd_calibrate(settings, args) -> int:
             return 1 if compared - agreeing > 3 else 0
         spec = load_bench(args.bench)
         tier = args.tier or spec.referee.tier
+        check_referee_pin(spec, os.environ)
+        env_gguf = os.environ.get(spec.referee.gguf_env, "")
+        sha = sha256_file(Path(env_gguf)) if env_gguf else ""   # before any judging, so a bad path costs nothing
         log = RunLog(settings.runs_dir, task=f"referee calibrate {tier}")
         gateway = Gateway(settings, log)
         try:
@@ -587,7 +591,7 @@ def cmd_calibrate(settings, args) -> int:
     result = calibration.recall(rows)
     passed = calibration.meets(result, spec)
     report = Path("results") / f"calibration_v1_{tier}.md"
-    _calibration_report(report, tier, spec, result, passed)
+    _calibration_report(report, tier, spec, result, passed, sha)
     for label in ("supported", "not_supported"):
         hits, total, interval = result[label]
         print(f"{label} recall: {hits} of {total}" + (f" (95% interval {interval[0]:.2f} to {interval[1]:.2f})" if interval else ""))

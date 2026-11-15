@@ -80,7 +80,11 @@ def _write(path: Path, rows: list[dict], fields=PAIR_FIELDS) -> None:
 
 def _read(path: Path) -> list[dict]:
     with Path(path).open(encoding="utf-8") as handle:
-        return list(csv.DictReader(handle))
+        rows = list(csv.DictReader(handle))
+    for row in rows:   # a hand-typed " Supported" is still a label
+        if row.get("label") is not None:
+            row["label"] = row["label"].strip().lower()
+    return rows
 
 
 def sample_pairs(eval_dirs: list[Path], out: Path, dev_ids: set[str], n: int = 150, seed: int = 20261115,
@@ -128,15 +132,22 @@ def spot_check(labelled: Path, out: Path, n: int = 25, seed: int = 20261116) -> 
 
 
 def judge_pairs(labelled: Path, runs_dir: Path, gateway, tier: str) -> list[dict]:
-    """Add referee_verdict to every pair, reading only the stored sources of its run folder."""
-    rows, cache = _read(labelled), {}
+    """Add referee_verdict (and referee_error) to every pair labelled supported or not_supported,
+    reading only the stored sources of its run folder. Blank and unclear labels never reach recall,
+    so they are not judged. A label outside LABELS raises ValueError naming the pair_ids."""
+    every = _read(labelled)
+    bad = [r["pair_id"] for r in every if r["label"] and r["label"] not in LABELS]
+    if bad:
+        raise ValueError(f"labels must be one of {LABELS}; pairs {', '.join(bad)} are not")
+    rows, cache = [r for r in every if r["label"] in ("supported", "not_supported")], {}
     for row in rows:
         run_dir = Path(runs_dir) / row["run_id"]
         if run_dir not in cache:
             cache[run_dir] = _sources(run_dir)
         source = cache[run_dir].get(row["index"])
         text = stored_source_text(run_dir, row["index"], source) if source is not None else ""
-        row["referee_verdict"] = judge(row["statement"], row["index"], source, text, gateway, tier).verdict
+        judgement = judge(row["statement"], row["index"], source, text, gateway, tier)
+        row["referee_verdict"], row["referee_error"] = judgement.verdict, judgement.referee_error
     return rows
 
 
@@ -148,6 +159,7 @@ def recall(rows: list[dict]) -> dict:
         hits = sum(r.get("referee_verdict") == label for r in mine)
         result[label] = (hits, len(mine), wilson(hits, len(mine)))
     result["unclear_labels"] = sum(r.get("label") == "unclear" for r in rows)
+    result["referee_errors"] = sum(bool(r.get("referee_error")) for r in rows)   # judgements that failed
     return result
 
 
