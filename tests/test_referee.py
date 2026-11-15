@@ -154,3 +154,61 @@ def test_referee_json_written(tmp_path):
     data = json.loads((run / "referee.json").read_text(encoding="utf-8"))
     assert data["summary"]["prompt_version"] == 1 and data["caveat"] == REFEREE_CAVEAT
     assert len(data["judgements"]) == 2 and data["statements"][0]["verdict"] == "unclear"
+
+
+def test_privacy_error_propagates(tmp_path):
+    import pytest
+    from assistant.gateway import PrivacyError
+
+    class Raising:
+        def ask(self, *a, **k):
+            raise PrivacyError("no cloud")
+    run = make_run(tmp_path, "# Q\n\nBM25 uses term frequency [1].\n")
+    with pytest.raises(PrivacyError):
+        score_run(run, q(), Raising(), "referee")
+
+
+def test_complete_flag(tmp_path):
+    run = make_run(tmp_path, "# Q\n\nBM25 uses term frequency [1].\n")
+    assert score_run(run, q(), FakeGateway(["nope", ""]), "referee")["complete"] is False
+    assert score_run(run, q(), FakeGateway([verdict("unclear")]), "referee")["complete"] is True
+
+
+def test_last_json_object_ignores_inner_and_trailing_objects():
+    from assistant.referee import last_json_object
+    inner = '{"verdict": "unclear", "quote": "a {} b", "reason": "r"}'
+    assert last_json_object("think " + inner)["verdict"] == "unclear"
+    assert last_json_object('{"verdict": "supported"} trailing {"note": 1}') == {"verdict": "supported"}
+
+
+def test_no_stored_text_is_a_referee_error():
+    j = judge("BM25 uses term frequency", "1", {"index": 1}, "", FakeGateway([]), "referee")
+    assert j.verdict == "unclear" and j.referee_error == "no stored text"
+
+
+def test_verdict_is_normalised():
+    gw = FakeGateway([verdict(" Not_Supported ")])
+    assert judge("BM25 uses term frequency", "1", {"index": 1}, PAGE, gw, "referee").verdict == "not_supported"
+
+
+def test_empty_reply_message():
+    j = judge("BM25 uses term frequency", "1", {"index": 1}, PAGE, FakeGateway(["", ""]), "referee")
+    assert j.referee_error == "empty reply"
+
+
+def test_stored_source_text(tmp_path):
+    from assistant.referee import stored_source_text
+    run = make_run(tmp_path, "# Q\n")
+    src = {"full_content": "bm25 USES term-frequency to rank documents", "snippet": "a snippet"}
+    assert stored_source_text(run, "1", src) == PAGE + "\n\na snippet"   # contained: skipped
+    src["full_content"] = "Extra body text."
+    assert stored_source_text(run, "1", src) == PAGE + "\n\nExtra body text.\n\na snippet"
+    assert stored_source_text(run, "9", {"snippet": "s"}) == "s"
+
+
+def test_two_sources_one_statement(tmp_path):
+    run = make_run(tmp_path, "# Q\n\nBM25 uses term frequency [1][2].\n", n_sources=2)
+    (run / "pages" / "2.txt").write_text(PAGE, encoding="utf-8")
+    gw = FakeGateway([verdict("not_supported"), verdict("supported", "BM25 uses term frequency to rank documents")])
+    s = score_run(run, q([["term frequency"]]), gw, "referee")
+    assert s["statements"] == 1 and s["supported"] == 1 and s["not_supported"] == 0 and s["facts_right"] == 1.0

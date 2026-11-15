@@ -12,7 +12,6 @@ from pathlib import Path
 
 from .bench_spec import REFEREE_CAVEAT
 from .evaluate import Question, fact_pattern
-from .gateway import PrivacyError, TierNotReady
 from .text import best_passages
 from .verify import quote_in_source, split_claims, squash
 
@@ -82,15 +81,16 @@ def stored_source_text(run_dir: Path, index: str, source: dict) -> str:
 def last_json_object(reply: str) -> dict:
     """The last JSON object in a reply. Reasoning text before it may contain braces, so the
     greedy verify.json_object would fail; try each "{" and keep the last that decodes."""
-    decoder, found = json.JSONDecoder(), {}
-    for start, char in enumerate(reply):
-        if char == "{":
-            try:
-                data, _ = decoder.raw_decode(reply, start)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(data, dict):
-                found = data
+    decoder, found, pos = json.JSONDecoder(), {}, 0
+    while (start := reply.find("{", pos)) != -1:
+        try:
+            data, end = decoder.raw_decode(reply, start)
+        except json.JSONDecodeError:
+            pos = start + 1
+            continue
+        pos = end   # only outermost objects count; skip what lies inside this one
+        if isinstance(data, dict) and "verdict" in data:
+            found = data
     return found
 
 
@@ -98,7 +98,8 @@ def judge(statement: str, index: str, source: dict | None, text: str, gateway, t
     if source is None:
         return Judgement(statement, index, "not_supported", reason="no such source")
     if not text:
-        return Judgement(statement, index, "unclear", reason="source has no stored text")
+        return Judgement(statement, index, "unclear", reason="source has no stored text",
+                         referee_error="no stored text")
     passages = best_passages(statement, text, count=PASSAGE_COUNT)
     snippet = source.get("snippet") or ""
     if snippet and squash(snippet) not in squash(" ".join(passages)):
@@ -107,25 +108,23 @@ def judge(statement: str, index: str, source: dict | None, text: str, gateway, t
                            passages="\n---\n".join(passages))
     error = ""
     for attempt in (prompt, prompt + RETRY):
-        try:
-            answer = gateway.ask(tier, [{"role": "user", "content": attempt}], purpose="referee",
-                                 private=True, max_tokens=MAX_TOKENS, temperature=0,
-                                 extra_body={"seed": SEED, "chat_template_kwargs": {"enable_thinking": True}})
-        except (PrivacyError, TierNotReady) as exc:
-            return Judgement(statement, index, "unclear", referee_error=str(exc))
+        answer = gateway.ask(tier, [{"role": "user", "content": attempt}], purpose="referee",
+                             private=True, max_tokens=MAX_TOKENS, temperature=0,
+                             extra_body={"seed": SEED, "chat_template_kwargs": {"enable_thinking": True}})
         if answer.error:
             error = answer.error
             continue
         data = last_json_object(answer.content or "")
-        verdict = data.get("verdict")
+        verdict = str(data.get("verdict") or "").strip().lower()
         if verdict not in LABELS:
-            error = "reply was not a verdict: " + " ".join((answer.content or "").split())[:300]
+            shown = " ".join((answer.content or "").split())[:300]
+            error = "reply was not a verdict: " + shown if shown else "empty reply"
             continue
         quote, reason = str(data.get("quote") or ""), str(data.get("reason") or "")
         if verdict == "supported" and not (quote and quote_in_source(quote, text)):
             return Judgement(statement, index, "unclear", quote, "quote not in source: " + reason)
         return Judgement(statement, index, verdict, quote, reason)
-    return Judgement(statement, index, "unclear", referee_error=error[:300] or "empty reply")
+    return Judgement(statement, index, "unclear", referee_error=error[:300])
 
 
 def statement_verdict(judgements: list[Judgement]) -> str:
@@ -169,6 +168,7 @@ def score_run(run_dir: Path, question: Question, gateway, tier: str) -> dict:
         "errors_through": round(count("not_supported") / len(found), 3) if found else None,
         "prompt_version": PROMPT_VERSION,
     }
+    summary["complete"] = summary["referee_errors"] == 0   # False: some judgements were not made
     (run_dir / "referee.json").write_text(json.dumps({
         "summary": summary, "caveat": REFEREE_CAVEAT,
         "statements": [{"text": s.text, "raw": s.raw, "citations": s.citations, "verdict": v}
