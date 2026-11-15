@@ -1,0 +1,177 @@
+"""The research bench's referee: a pinned local model judges every sentence of a saved report
+against the stored text of the sources it cites (FACT-style scoring).
+
+It reads only what the run folder already holds (sources.json, pages/<index>.txt) and never
+fetches or searches. Every call is private, so a private prompt can never reach a cloud tier.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from .bench_spec import REFEREE_CAVEAT
+from .evaluate import Question, fact_pattern
+from .gateway import PrivacyError, TierNotReady
+from .text import best_passages
+from .verify import quote_in_source, split_claims, squash
+
+LABELS = ("supported", "not_supported", "unclear")
+PROMPT_VERSION = 1
+PASSAGE_COUNT = 6
+SEED = 20261115
+MAX_TOKENS = 4000
+
+PROMPT = """You are the referee of a research report. Judge one sentence of the report against
+the passages of the one source it cites.
+
+Sentence: {statement}
+
+Passages from source [{index}] ({title}):
+{passages}
+
+Think it through, then end your reply with one JSON object and nothing after it:
+{{"verdict": "supported" | "not_supported" | "unclear", "quote": "<the exact sentence from the passages that supports it, or empty>", "reason": "<one short sentence>"}}
+"supported" means the passages state the sentence, including any version numbers and figures in it.
+"not_supported" means the passages contradict it or say nothing about it. "unclear" means you cannot tell.
+Copy the quote exactly; do not paraphrase.
+"""
+RETRY = "\n\nEnd your reply with the JSON object only; nothing may come after it."
+
+
+@dataclass
+class Statement:
+    text: str
+    raw: str
+    citations: list[str]
+
+
+@dataclass
+class Judgement:
+    statement: str
+    index: str
+    verdict: str
+    quote: str = ""
+    reason: str = ""
+    referee_error: str = ""
+
+
+def statements(report: str) -> list[Statement]:
+    """The report's claims, as written, with exact duplicate texts merged (citations unioned)."""
+    merged: dict[str, Statement] = {}
+    for claim in split_claims(report):
+        found = merged.get(claim.text)
+        if found is None:
+            merged[claim.text] = Statement(claim.text, claim.raw, list(claim.citations))
+        else:
+            found.citations += [c for c in claim.citations if c not in found.citations]
+    return list(merged.values())
+
+
+def stored_source_text(run_dir: Path, index: str, source: dict) -> str:
+    """pages/<index>.txt if present, plus full_content when not already inside, plus the snippet."""
+    page_file = Path(run_dir) / "pages" / f"{index}.txt"
+    page = page_file.read_text(encoding="utf-8") if page_file.is_file() else ""
+    given = source.get("full_content") or ""
+    if given and squash(given) not in squash(page):
+        page = page + "\n\n" + given if page else given
+    snippet = source.get("snippet") or ""
+    return page + "\n\n" + snippet if page and snippet else page or snippet
+
+
+def last_json_object(reply: str) -> dict:
+    """The last JSON object in a reply. Reasoning text before it may contain braces, so the
+    greedy verify.json_object would fail; try each "{" and keep the last that decodes."""
+    decoder, found = json.JSONDecoder(), {}
+    for start, char in enumerate(reply):
+        if char == "{":
+            try:
+                data, _ = decoder.raw_decode(reply, start)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(data, dict):
+                found = data
+    return found
+
+
+def judge(statement: str, index: str, source: dict | None, text: str, gateway, tier: str) -> Judgement:
+    if source is None:
+        return Judgement(statement, index, "not_supported", reason="no such source")
+    if not text:
+        return Judgement(statement, index, "unclear", reason="source has no stored text")
+    passages = best_passages(statement, text, count=PASSAGE_COUNT)
+    snippet = source.get("snippet") or ""
+    if snippet and squash(snippet) not in squash(" ".join(passages)):
+        passages.append(snippet)
+    prompt = PROMPT.format(statement=statement, index=index, title=source.get("title", ""),
+                           passages="\n---\n".join(passages))
+    error = ""
+    for attempt in (prompt, prompt + RETRY):
+        try:
+            answer = gateway.ask(tier, [{"role": "user", "content": attempt}], purpose="referee",
+                                 private=True, max_tokens=MAX_TOKENS, temperature=0,
+                                 extra_body={"seed": SEED, "chat_template_kwargs": {"enable_thinking": True}})
+        except (PrivacyError, TierNotReady) as exc:
+            return Judgement(statement, index, "unclear", referee_error=str(exc))
+        if answer.error:
+            error = answer.error
+            continue
+        data = last_json_object(answer.content or "")
+        verdict = data.get("verdict")
+        if verdict not in LABELS:
+            error = "reply was not a verdict: " + " ".join((answer.content or "").split())[:300]
+            continue
+        quote, reason = str(data.get("quote") or ""), str(data.get("reason") or "")
+        if verdict == "supported" and not (quote and quote_in_source(quote, text)):
+            return Judgement(statement, index, "unclear", quote, "quote not in source: " + reason)
+        return Judgement(statement, index, verdict, quote, reason)
+    return Judgement(statement, index, "unclear", referee_error=error[:300] or "empty reply")
+
+
+def statement_verdict(judgements: list[Judgement]) -> str:
+    verdicts = {j.verdict for j in judgements}
+    return "supported" if "supported" in verdicts else "not_supported" if "not_supported" in verdicts else "unclear"
+
+
+def score_run(run_dir: Path, question: Question, gateway, tier: str) -> dict:
+    run_dir = Path(run_dir)
+    report = (run_dir / "report.md").read_text(encoding="utf-8")
+    sources = {str(s.get("index") or n): s for n, s in
+               enumerate(json.loads((run_dir / "sources.json").read_text(encoding="utf-8")), start=1)}
+    found, judgements, verdicts = statements(report), [], []
+    uncited = 0
+    for st in found:
+        if not st.citations:   # the pipeline promises every claim is cited
+            uncited += 1
+            judgements.append(Judgement(st.text, "", "not_supported", reason="uncited"))
+            verdicts.append("not_supported")
+            continue
+        mine = []
+        for index in st.citations:
+            source = sources.get(index)
+            text = stored_source_text(run_dir, index, source) if source is not None else ""
+            mine.append(judge(st.text, index, source, text, gateway, tier))
+        judgements += mine
+        verdicts.append(statement_verdict(mine))
+    count = lambda label: sum(v == label for v in verdicts)
+    supported_raw = [st.raw for st, v in zip(found, verdicts) if v == "supported"]
+    facts = None
+    if question.expect:
+        hits = sum(any(fact_pattern(term).search(raw) for raw in supported_raw for term in group)
+                   for group in question.expect)
+        facts = round(hits / len(question.expect), 3)
+    summary = {
+        "statements": len(found), "cited": len(found) - uncited, "uncited": uncited,
+        "supported": count("supported"), "not_supported": count("not_supported"),
+        "unclear": count("unclear"),
+        "referee_errors": sum(bool(j.referee_error) for j in judgements),
+        "facts_right": facts,
+        "errors_through": round(count("not_supported") / len(found), 3) if found else None,
+        "prompt_version": PROMPT_VERSION,
+    }
+    (run_dir / "referee.json").write_text(json.dumps({
+        "summary": summary, "caveat": REFEREE_CAVEAT,
+        "statements": [{"text": s.text, "raw": s.raw, "citations": s.citations, "verdict": v}
+                       for s, v in zip(found, verdicts)],
+        "judgements": [asdict(j) for j in judgements]}, indent=2), encoding="utf-8")
+    return summary
