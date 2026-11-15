@@ -307,3 +307,31 @@ def test_heldout_questions_load_and_are_new():
     assert len(heldout) == 20 and len({q.id for q in heldout}) == 20
     assert not {q.id for q in heldout} & {q.id for q in tuned}
     assert all(q.public and not q.codex and len(q.expect) >= 3 for q in heldout)
+
+
+def test_claim_sample_draws_passed_and_removed_claims_and_scores_labels(tmp_path):
+    import csv as csv_module
+    from assistant import claim_sample
+    script = tmp_path / "fake_ldr.py"
+    script.write_text(FLAGGED_LDR, encoding="utf-8")
+    question = Question(id="py", text="q")
+    out_dir, (row,) = run_eval(settings_for(tmp_path), [question], ["local"],
+                               runner=[sys.executable, str(script)], transport=flagged_transport(), runs=1)
+    out = tmp_path / "sample.csv"
+    rows = claim_sample.sample([out_dir], out, n_passed=5, n_removed=5)
+    assert sorted(r["group"] for r in rows) == ["passed", "removed"]
+    removed = next(r for r in rows if r["group"] == "removed")
+    assert "flying cars" in removed["claim"] and "[1] What's new <https://docs.python.org" in removed["sources"]
+
+    with out.open(encoding="utf-8") as handle:
+        labelled = list(csv_module.DictReader(handle))
+    for r in labelled:
+        r["label"], r["labeller"] = ("true" if r["group"] == "passed" else "false"), "test"
+    with out.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv_module.DictWriter(handle, fieldnames=claim_sample.FIELDS)
+        writer.writeheader()
+        writer.writerows(labelled)
+    result = claim_sample.score(out)
+    assert (result["passed"]["wrong"], result["passed"]["labelled"]) == (0, 1)
+    assert (result["removed"]["wrong"], result["removed"]["labelled"]) == (0, 1)
+    assert "False passes" in claim_sample.score_markdown(result)

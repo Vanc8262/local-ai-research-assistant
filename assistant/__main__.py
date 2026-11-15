@@ -17,6 +17,8 @@
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
     python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
+    python -m assistant claims sample runs/eval-<id> ...    sample checker verdicts to label by hand
+    python -m assistant claims score results/claim_sample.csv   false-pass and false-removal rates from the labels
     python -m assistant decide probe [-t local]             which decision method works on a local tier
     python -m assistant decide check [-t local -t local-backup] [--debias]
                                                             score the decider on evals/decide_cases.toml
@@ -39,6 +41,7 @@ from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
+from . import claim_sample
 from .evaluate import MODES, load_questions, reload_model, rescore, run_eval
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
@@ -315,6 +318,25 @@ def cmd_rescore(settings, args) -> int:
     return 0 if rows else 1
 
 
+def cmd_claims(settings, args) -> int:
+    if args.action == "sample":
+        if not args.paths:
+            print("Name at least one eval folder, e.g. runs/eval-20261115-...")
+            return 2
+        out = Path(args.out)
+        rows = claim_sample.sample([Path(p) for p in args.paths], out, args.passed, args.removed, args.seed,
+                                   settings.runs_dir)
+        print(f"Sampled {sum(r['group'] == 'passed' for r in rows)} passed and "
+              f"{sum(r['group'] == 'removed' for r in rows)} removed claims into {out}. "
+              "Fill `label` (true, false or unclear) and `labeller`, then run: python -m assistant claims score " + str(out))
+        return 0 if rows else 1
+    if len(args.paths) != 1:
+        print("Name the one labelled CSV to score")
+        return 2
+    print(claim_sample.score_markdown(claim_sample.score(Path(args.paths[0]))))
+    return 0
+
+
 def cmd_decide(settings, args) -> int:
     tiers = args.tier or [settings.default_tier]
     log = RunLog(settings.runs_dir, task=f"decide {args.action}: {', '.join(tiers)}")
@@ -488,6 +510,13 @@ def main(argv: list[str] | None = None) -> int:
     snap = evaluate.add_mutually_exclusive_group()
     snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
     snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")
+    claims = sub.add_parser("claims", help="sample the checker's verdicts for labelling, or score the labels")
+    claims.add_argument("action", choices=["sample", "score"])
+    claims.add_argument("paths", nargs="*", help="sample: eval folders; score: the labelled CSV")
+    claims.add_argument("--out", default="results/claim_sample.csv")
+    claims.add_argument("--passed", type=int, default=40, help="passed claims to sample (default 40)")
+    claims.add_argument("--removed", type=int, default=20, help="removed claims to sample (default 20)")
+    claims.add_argument("--seed", type=int, default=20261115)
     dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")
     dec.add_argument("action", choices=("probe", "check"))
     dec.add_argument("-t", "--tier", action="append", help="local tier; repeat to compare (default: the default tier)")
@@ -509,7 +538,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "rescore": cmd_rescore, "decide": cmd_decide, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "rescore": cmd_rescore, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 
