@@ -106,6 +106,11 @@ python -m assistant repair <run_id>                    # fix or remove the claim
 python -m assistant eval [--runs 2]                    # Stage 2 eval: 5 questions x 2 runs; local, hybrid and codex; verified and repaired
 python -m assistant eval --mode local --mode offline --no-tavily   # the fully local search gate
 python -m assistant rescore runs/eval-<id>               # score a finished eval again from its saved reports, no models
+python -m assistant eval --questions evals/heldout_questions.toml --runs 1 --mode local --mode hybrid \
+    --record-search runs/snapshots/heldout              # the held-out set, once, recording the page searches
+python -m assistant eval ... --replay-search runs/snapshots/heldout   # the same searches again, no network
+python -m assistant claims sample runs/eval-<id>         # a seeded sample of passed and removed claims to label
+python -m assistant claims score results/claim_sample.csv   # false-pass and false-removal rates from the labels
 python -m assistant vault plan                         # what the picks in vault.toml would store
 python -m assistant vault sync                         # store exactly those picks, verified
 python -m assistant vault verify                       # re-hash every stored file

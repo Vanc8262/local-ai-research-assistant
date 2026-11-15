@@ -50,6 +50,8 @@ from .manifest import build_manifest, write_manifest
 from .repair import RepairError, repair_run
 from .research import run_research
 from .runlog import RunLog, new_run_id, read_run
+from .snapshot import SearchSnapshot
+from .stats import paired, wilson
 from .verify import verify_run
 
 # Modes: (label, tier, search, public). Hybrid writes with Gemini and searches with Tavily.
@@ -69,7 +71,8 @@ FIELDS = ("question", "mode", "run", "outcome", "research_s", "verify_s", "repai
           "accuracy", "supported", "partial", "unsupported", "uncited", "facts", "claims_before",
           "coverage_before", "accuracy_before", "facts_before", "cited", "rewritten", "removed",
           "removed_share", "changed", "changed_share", "unchecked", "gate_failures", "doubted", "decider_errors", "min_free_ram_mb", "local_tokens", "cloud_tokens",
-          "gate", "run_id", "error", "tavily_sources", "offline_sources", "live_sources", "bonus_sources")
+          "gate", "run_id", "error", "tavily_sources", "offline_sources", "live_sources", "bonus_sources",
+          "snapshot_recorded", "snapshot_exact", "snapshot_nearest", "snapshot_missed")
 
 
 @dataclass
@@ -171,7 +174,11 @@ def _llama_swap_unload(base_url: str, post) -> None:
 def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
              verify_tier: str | None = None, reload: bool = False, runner=None, transport=None,
              reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0,
-             questions_path: str | Path | None = None) -> tuple[Path, list[dict]]:
+             questions_path: str | Path | None = None, snapshot_dir: str | Path | None = None,
+             snapshot_mode: str = "record") -> tuple[Path, list[dict]]:
+    """snapshot_dir: record the page searches of local and offline modes there, one folder per
+    question and mode (snapshot_mode "record"), or answer them from an earlier recording
+    ("replay"; see assistant/snapshot.py)."""
     out_dir = Path(settings.runs_dir) / f"eval-{new_run_id()}"
     out_dir.mkdir(parents=True, exist_ok=True)
     write_manifest(out_dir, build_manifest(settings, modes=modes, runs=runs, question_ids=[q.id for q in questions],
@@ -189,8 +196,11 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
                         continue   # a private question never runs on a cloud mode
                     ram.label = f"{question.id} {mode} run {run}"
                     ram.reset_low()
+                    snapshot = None
+                    if snapshot_dir and MODES[mode][1] in ("searxng", "offline"):
+                        snapshot = SearchSnapshot(Path(snapshot_dir) / f"{question.id}-{mode}", snapshot_mode)
                     row = _one(settings, question, mode, verify_tier, runner, transport,
-                               (lambda: reloader(settings, verify_tier)) if reload else None, ram)
+                               (lambda: reloader(settings, verify_tier)) if reload else None, ram, snapshot)
                     ram.sample()
                     rows.append({**row, "run": run, "min_free_ram_mb": ram.low})
                     write_summary(out_dir, rows, ram.lowest)   # after every run, so a long eval can be read as it goes
@@ -198,7 +208,8 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
     return out_dir, rows
 
 
-def _one(settings, question: Question, mode: str, verify_tier, runner, transport, reload, ram) -> dict:
+def _one(settings, question: Question, mode: str, verify_tier, runner, transport, reload, ram,
+         snapshot: SearchSnapshot | None = None) -> dict:
     tier, search, public = MODES[mode]
     log = RunLog(settings.runs_dir, task=f"eval {question.id} ({mode}): {question.text}")
     row = {"question": question.id, "mode": mode, "run_id": log.run_id}
@@ -208,9 +219,12 @@ def _one(settings, question: Question, mode: str, verify_tier, runner, transport
         # A public question's local mode may use the Tavily fallback when SearXNG returns
         # nothing. The model still runs locally; tavily_sources records the use.
         result = run_research(settings, question.text, log, tier=tier, search=search, public=public and question.public,
-                              runner=runner, transport=transport, public_search=question.public)
+                              runner=runner, transport=transport, public_search=question.public,
+                              snapshot=snapshot)
     except Exception as exc:   # a blocked or unready mode is a result too; keep going
         return {**row, "outcome": "not_run", "error": f"{type(exc).__name__}: {exc}"}
+    if snapshot is not None:
+        row.update({f"snapshot_{key}": value for key, value in snapshot.counts.items()})
     row["research_s"] = round(time.perf_counter() - started, 1)
     row["sources"], row["tavily_sources"] = len(result.sources), result.tavily_sources
     for layer in ("offline", "live", "bonus"):
@@ -327,6 +341,19 @@ def summary_markdown(rows: list[dict], lowest_ram: tuple | None = None) -> str:
         for r in done:
             both.setdefault(r["question"], []).append(r["gate"] == "pass")
         lines.append(f"Questions that passed on every run: {sum(all(v) for v in both.values())} of {len(both)}.")
+        passed = sum(r["gate"] == "pass" for r in done)
+        if done:
+            low, high = wilson(passed, len(done))
+            lines.append(f"Pass rate {passed}/{len(done)}, 95% Wilson interval {low:.0%} to {high:.0%}. Runs of the same "
+                         "question are not independent, so with more than one run per question the true interval is wider.")
+    gated = [m for m in dict.fromkeys(r["mode"] for r in rows) if any(r["mode"] == m and r.get("outcome") == "ok" for r in rows)]
+    for i, mode_a in enumerate(gated):
+        for mode_b in gated[i + 1:]:
+            test = paired(rows, mode_a, mode_b)
+            if test:
+                lines.append(f"\n**{mode_a} vs {mode_b}, paired by question and run:** {test['pairs']} pairs; both pass "
+                             f"{test['both']}, neither {test['neither']}, only {mode_a} {test['only_a']}, only {mode_b} "
+                             f"{test['only_b']}. Exact McNemar p = {test['p']} (under 0.05 is a real difference).")
     if lowest_ram:
         lines.append(f"\n**Lowest free RAM:** {lowest_ram[0]} MB, during {lowest_ram[1] or 'setup'}. "
                      "Samples every 15 s are in ram.csv.")
