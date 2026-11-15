@@ -61,10 +61,11 @@ def test_other_model_unaffected(tmp_path):
 
 def test_missing_or_header_only_ledger_allows_an_attempt(tmp_path):
     check_attempt(tmp_path / "none.csv", 1, "g", "k1")
-    shipped = ROOT / "results" / "bench_ledger.csv"
-    assert shipped.read_text(encoding="utf-8").strip() == ",".join(LEDGER_FIELDS)
+    shipped = ROOT / "results" / "bench_ledger.csv"   # its header (rows may follow once attempts are run)
+    header = shipped.read_text(encoding="utf-8").splitlines()[0]
+    assert header == ",".join(LEDGER_FIELDS)
     led = tmp_path / "l.csv"
-    led.write_text(shipped.read_text(encoding="utf-8"), encoding="utf-8")
+    led.write_text(header + "\n", encoding="utf-8")
     check_attempt(led, 1, "g", "k1")
     record_attempt(led, _row("k1"))
     assert len(read_ledger(led)) == 1
