@@ -1,12 +1,16 @@
 """The research bench scorecard (spec sections 6.4 to 6.9): fit, quality, ranking, and the pass line.
 
 One card per bench eval: the candidate's fit failures (assistant/fit.py), and its quality from the
-referee (referee.csv) and the pipeline (summary.csv), per question first:
+referee (referee.csv) and the pipeline (summary.csv):
 
-- facts right: the share of the question's expected facts found in referee-supported statements.
-  A run that ended without a report scores 0, so failing can't raise the score.
-- errors through: the share of the report's statements the referee marks not_supported. A run
-  without a report has none (None), and counts under the fit check instead.
+- facts right: the share of the question's expected facts found in referee-supported statements,
+  averaged over runs, then over questions. A run that ended without a report scores 0, so failing
+  can't raise the score.
+- errors through: pooled over all final statements, the not_supported statements of all the card's
+  reports over all their statements (spec 6.5). A run without a report has none, and counts under
+  the fit check instead. Per question (for the paired comparison) it is pooled over that question's runs.
+- referee failed: the share of the card's statements the referee could not judge (a final "unclear"
+  from a failed judgement); a card above [referee] max_referee_failed is refused.
 - minutes: research + verify + repair. With several runs of a question, its runs are averaged.
 
 Ranking: fit failures are listed last and not ranked. Every pair of the rest is decided in turn: A
@@ -15,20 +19,23 @@ when it holds 0 (or fewer than MIN_SHARED questions pair up) they are tied on fa
 through decides the same way (lower wins); when both are tied, the lower median minutes per report
 wins. Those pairwise results need not be transitive (A > B > C > A happens), so a sort by them
 would depend on the input order. The rank is therefore the Copeland score, pairwise wins minus
-losses, with equal scores ordered by facts right, median minutes and candidate key; a cycle is
-named on the scorecard as ranks that the bench can't separate. Only local-mode rows are
-candidates; a hybrid row (Gemini writes, the candidate checks) is shown as a reference, not ranked.
+losses. Among equal scores the head-to-head result decides first (wins minus losses against the
+others with that score, so of two cards the winner of their pair ranks higher), then facts right,
+median minutes and candidate key; a cycle is named on the scorecard as ranks that the bench can't
+separate. Only local-mode rows are candidates; a hybrid row (Gemini writes, the candidate checks) is
+shown as a reference, not ranked.
 
-The scorecard refuses to mix bench versions or splits, and refuses a run the referee hasn't fully
-judged. On the test split it also refuses an eval whose tree wasn't clean, that has no referee.csv,
-or whose attempt isn't in the committed ledger at HEAD; the caller then marks each attempt passed or
-missed, so the result is written only for an attempt that can no longer be quietly undone. An attempt
-the ledger already holds as "error" stays "error", and its card shows "error (scored passed|missed)".
+The scorecard refuses to mix bench versions or splits, refuses a run the referee hasn't fully
+judged or judged with another prompt or referee file, and an eval whose question files changed
+after it ran. On the test split it also refuses an eval whose tree wasn't clean, that has no
+referee.csv, or whose attempt isn't in the committed ledger at HEAD; the caller then marks each
+attempt passed or missed, so the result is written only for an attempt that can no longer be quietly
+undone. An attempt the ledger already holds as "error" stays "error", and its card shows
+"error (scored passed|missed)".
 """
 from __future__ import annotations
 
 import csv
-import io
 import json
 import os
 import random
@@ -37,8 +44,10 @@ import statistics
 from dataclasses import dataclass
 from pathlib import Path
 
-from .bench_spec import REFEREE_CAVEAT, BenchSpec, PassLine
+from .bench_spec import REFEREE_CAVEAT, BenchSpec, PassLine, normal_hash, question_file_problems
 from .fit import _number, fit_failures, report_seconds
+from .ledger import committed_eval_ids
+from .manifest import REPO_ROOT
 
 BOOTSTRAP_N = 10000
 SEED = 20261115
@@ -70,6 +79,7 @@ class Card:
     gguf_sha256: str = ""
     gguf_file: str = ""
     ledger_status: str = ""   # the test attempt's status before the scorecard; "error" stays error
+    referee_failed_share: float | None = None   # statements the referee could not judge, of all statements
 
 
 @dataclass
@@ -126,10 +136,17 @@ def _mean(values) -> float | None:
     return sum(known) / len(known) if known else None
 
 
+def _count(value) -> int:
+    number = _number(value)
+    return int(number) if number is not None else 0
+
+
 def per_question(eval_dir: Path, mode: str = LOCAL) -> dict[str, dict]:
-    """question -> {facts_right, errors_through, minutes}, each the mean over the question's runs.
-    A failed run gives facts_right 0.0, errors_through None and the minutes of what ran. An ok run
-    with no referee row raises ScorecardRefused."""
+    """question -> {facts_right, errors_through, minutes, statements, not_supported, referee_failed}.
+    facts_right and minutes are means over the question's runs; errors_through is pooled over them
+    (not_supported over statements), and the three counts are their sums. A failed run gives
+    facts_right 0.0, no statements and the minutes of what ran. An ok run with no referee row
+    raises ScorecardRefused."""
     referee = _referee_rows(eval_dir) or {}
     runs: dict[str, list[tuple]] = {}
     for row in eval_rows(eval_dir, mode):
@@ -137,13 +154,26 @@ def per_question(eval_dir: Path, mode: str = LOCAL) -> dict[str, dict]:
             judged = referee.get(row["run_id"])
             if judged is None:
                 raise ScorecardRefused(f"{Path(eval_dir).name}: run {row['run_id']} has no referee score")
-            scores = (_number(judged.get("facts_right")), _number(judged.get("errors_through")))
+            scores = (_number(judged.get("facts_right")), _count(judged.get("statements")),
+                      _count(judged.get("not_supported")), _count(judged.get("referee_failed")))
         else:
-            scores = (0.0, None)
+            scores = (0.0, 0, 0, 0)
         runs.setdefault(row["question"], []).append((*scores, report_seconds(row) / 60))
-    return {question: {"facts_right": _mean(f for f, _, _ in found), "errors_through": _mean(e for _, e, _ in found),
-                       "minutes": _mean(m for _, _, m in found)}
-            for question, found in runs.items()}
+    out = {}
+    for question, found in runs.items():
+        statements = sum(r[1] for r in found)
+        not_supported = sum(r[2] for r in found)
+        out[question] = {"facts_right": _mean(r[0] for r in found),
+                         "errors_through": not_supported / statements if statements else None,
+                         "minutes": _mean(r[4] for r in found), "statements": statements,
+                         "not_supported": not_supported, "referee_failed": sum(r[3] for r in found)}
+    return out
+
+
+def pooled(per_q: dict[str, dict], key: str = "not_supported") -> float | None:
+    """sum of `key` over sum of statements, across every question: the spec's pooled share."""
+    statements = sum(v.get("statements") or 0 for v in per_q.values())
+    return sum(v.get(key) or 0 for v in per_q.values()) / statements if statements else None
 
 
 # --- the bootstrap -----------------------------------------------------------------------------
@@ -177,9 +207,26 @@ def paired_bootstrap(a: dict[str, float], b: dict[str, float], n: int = BOOTSTRA
     return sum(diffs) / len(diffs), low, high
 
 
+def bootstrap_ratio(pairs: list[tuple[int, int]], n: int = BOOTSTRAP_N, seed: int = SEED) -> tuple[float, float]:
+    """95% percentile interval of sum(a) / sum(b), resampling the (a, b) pairs (questions) n times."""
+    rng = random.Random(seed)
+    ratios = []
+    for _ in range(n):
+        sample = rng.choices(pairs, k=len(pairs))
+        total = sum(b for _, b in sample)
+        ratios.append(sum(a for a, _ in sample) / total if total else 0.0)
+    ratios.sort()
+    return _quantile(ratios, 0.025), _quantile(ratios, 0.975)
+
+
 def _ci(per_q: dict[str, dict], key: str) -> tuple[float, float] | None:
     values = [v[key] for v in per_q.values() if v[key] is not None]
     return bootstrap_mean(values) if values else None
+
+
+def _pooled_ci(per_q: dict[str, dict]) -> tuple[float, float] | None:
+    pairs = [(v["not_supported"], v["statements"]) for v in per_q.values() if v.get("statements")]
+    return bootstrap_ratio(pairs) if pairs else None
 
 
 # --- ranking -----------------------------------------------------------------------------------
@@ -235,24 +282,35 @@ def pairwise(cards: list[Card]) -> list[Pairwise]:
     return found
 
 
-def _order_key(card: Card, score: int) -> tuple:
+def _order_key(card: Card, score: int, head_to_head: int = 0) -> tuple:
     facts = card.facts_right
     minutes = card.median_minutes
-    return (-score, facts is None, -(facts or 0.0), minutes is None, minutes or 0.0, card.candidate_key, card.eval_id)
+    return (-score, -head_to_head, facts is None, -(facts or 0.0), minutes is None, minutes or 0.0,
+            card.candidate_key, card.eval_id)
 
 
 def rank(cards: list[Card], pass_line: PassLine) -> list[Card]:
     """Fit passes by Copeland score (pairwise wins minus losses), then fit failures as given;
-    sets each card's `passes`. The order of the fit passes never depends on the input order."""
+    sets each card's `passes`. Among equal scores the head-to-head decides first: wins minus losses
+    against the other cards with that score (for two cards, the winner of their pair goes first);
+    a cycle among them leaves that at 0 and the tie-breaks decide. The order of the fit passes never
+    depends on the input order."""
     for card in cards:
         card.passes = _passes(card, pass_line)
+    pairs = pairwise(cards)
     score = {id(c): 0 for c in cards}
-    for pair in pairwise(cards):
+    for pair in pairs:
         if pair.winner is not None:
             loser = pair.b if pair.winner is pair.a else pair.a
             score[id(pair.winner)] += 1
             score[id(loser)] -= 1
-    fits = sorted((c for c in cards if not c.fit), key=lambda c: _order_key(c, score[id(c)]))
+    head = {id(c): 0 for c in cards}
+    for pair in pairs:
+        if pair.winner is not None and score[id(pair.a)] == score[id(pair.b)]:
+            loser = pair.b if pair.winner is pair.a else pair.a
+            head[id(pair.winner)] += 1
+            head[id(loser)] -= 1
+    fits = sorted((c for c in cards if not c.fit), key=lambda c: _order_key(c, score[id(c)], head[id(c)]))
     return fits + [c for c in cards if c.fit]
 
 
@@ -309,19 +367,25 @@ def _referee_problems(eval_dir: Path, spec: BenchSpec, test: bool) -> list[str]:
     if unjudged:
         problems.append(f"{name}: runs not fully judged by the referee: {', '.join(unjudged)}; "
                         f"re-run `assistant referee {name}` until it succeeds")
+    uncounted = [run_id for run_id, r in referee.items()
+                 if any((r.get(key) or "").strip() == "" for key in ("statements", "not_supported", "referee_failed"))]
+    if uncounted:
+        problems.append(f"{name}: referee.csv has no statements, not_supported or referee_failed count for "
+                        f"{', '.join(uncounted)}; re-run `assistant referee {name}`")
     versions = sorted({r.get("prompt_version", "") for r in referee.values()} - {str(spec.referee.prompt_version)})
     if versions:
         problems.append(f"{name}: referee prompt version {', '.join(versions)}, not the spec's "
                         f"{spec.referee.prompt_version}")
-    if spec.referee.sha256 and any(r.get("referee_sha256") != spec.referee.sha256 for r in referee.values()):
+    pinned_prompt = normal_hash(spec.referee.prompt_hash)
+    if pinned_prompt and any(normal_hash(r.get("prompt_hash")) != pinned_prompt for r in referee.values()):
+        problems.append(f"{name}: judged with another referee prompt hash than the spec's {pinned_prompt[:12]}")
+    pinned = normal_hash(spec.referee.sha256)
+    if pinned and any(normal_hash(r.get("referee_sha256")) != pinned for r in referee.values()):
         problems.append(f"{name}: judged by another referee file than the spec pins")
     return problems
 
 
-def _committed_eval_ids(committed_ledger: str | None) -> set[str]:
-    if not committed_ledger:
-        return set()
-    return {r.get("eval_id", "") for r in csv.DictReader(io.StringIO(committed_ledger))}
+_committed_eval_ids = committed_eval_ids   # the ledger's helper, under its old name here
 
 
 def _card(eval_dir: Path, manifest: dict, spec: BenchSpec, mode: str, env) -> Card:
@@ -344,20 +408,21 @@ def _card(eval_dir: Path, manifest: dict, spec: BenchSpec, mode: str, env) -> Ca
     card = Card(candidate=candidate, candidate_key=bench.get("candidate_key", ""), eval_id=Path(eval_dir).name,
                 bench_version=bench.get("version"), fit=fit,
                 facts_right=_mean(v["facts_right"] for v in per_q.values()), facts_ci=_ci(per_q, "facts_right"),
-                errors_through=_mean(v["errors_through"] for v in per_q.values()),
-                errors_ci=_ci(per_q, "errors_through"),
+                errors_through=pooled(per_q), errors_ci=_pooled_ci(per_q),
                 median_minutes=statistics.median(minutes) if minutes else None, per_question=per_q, flags=flags,
                 passes=False, split=bench.get("split", ""), mode=mode,
-                gguf_sha256=bench.get("candidate_gguf_sha256", ""), gguf_file=gguf)
+                gguf_sha256=bench.get("candidate_gguf_sha256", ""), gguf_file=gguf,
+                referee_failed_share=pooled(per_q, "referee_failed"))
     card.passes = mode == LOCAL and _passes(card, spec.pass_line)
     return card
 
 
 def build_cards(eval_dirs: list[Path], spec: BenchSpec, *, env=os.environ, committed_ledger: str | None = None,
-                spec_sha256: str | None = None) -> tuple[list[Card], list[Card]]:
+                spec_sha256: str | None = None, repo_root: Path | None = None) -> tuple[list[Card], list[Card]]:
     """(candidate cards, hybrid reference cards) for evals of one bench version and split, or
     ScorecardRefused naming every problem. committed_ledger: the ledger's text at HEAD, needed on
-    the test split; spec_sha256: the spec file's hash, which a test-split eval must have run with."""
+    the test split; spec_sha256: the spec file's hash, which a test-split eval must have run with;
+    repo_root: where the manifests' relative question-file paths start (default the repo's)."""
     eval_dirs = [Path(d) for d in eval_dirs]
     names = [d.name for d in eval_dirs]
     if len(set(names)) != len(names):
@@ -391,6 +456,7 @@ def build_cards(eval_dirs: list[Path], spec: BenchSpec, *, env=os.environ, commi
             if name not in committed:
                 problems.append(f"{name}: its attempt is not in the committed ledger at HEAD; commit "
                                 "results/bench_ledger.csv first")
+        problems += [f"{name}: {p}" for p in question_file_problems(bench, Path(repo_root or REPO_ROOT))]
         problems += _referee_problems(eval_dir, spec, test)
     if problems:
         raise ScorecardRefused("\n".join(problems))
@@ -399,6 +465,12 @@ def build_cards(eval_dirs: list[Path], spec: BenchSpec, *, env=os.environ, commi
         cards.append(_card(eval_dir, manifest, spec, LOCAL, env))
         other = {r.get("mode") for r in _read_csv(eval_dir / "summary.csv")} - {LOCAL}
         reference += [_card(eval_dir, manifest, spec, mode, env) for mode in sorted(other)]
+    limit = spec.referee.max_referee_failed
+    failed = [f"{c.eval_id} ({c.mode}): the referee could not judge {_pct(c.referee_failed_share)} of its "
+              f"statements, above the spec's {_pct(limit)} ([referee] max_referee_failed)"
+              for c in cards + reference if c.referee_failed_share is not None and c.referee_failed_share > limit]
+    if failed:
+        raise ScorecardRefused("\n".join(failed))
     return cards, reference
 
 
@@ -498,7 +570,9 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
     fit, line = spec.fit, spec.pass_line
     lines = [f"# Research bench v{spec.version} scorecard ({split or 'no'} split)", "", REFEREE_CAVEAT, "",
              f"Pass line: facts right at least {line.min_facts_right:.0%} and errors through at most "
-             f"{line.max_errors_through:.0%} on the test split, plus fit: fully on the GPU at {fit.context} context, "
+             f"{line.max_errors_through:.0%} on the test split, plus fit. Errors through is pooled over all final "
+             "statements: the not_supported statements of all the card's reports over all their statements. "
+             f"Fit: fully on the GPU at {fit.context} context, "
              f"free RAM never below {fit.min_free_ram_mb} MB, at most {fit.max_report_minutes:g} minutes per report, "
              f"at most {fit.max_error_share:.0%} of runs without a report. `gpu?` means the offload was not "
              "recorded, so the GPU check is unknown and not counted as a failure.", "",
@@ -508,22 +582,26 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
              f"{MIN_SHARED} shared questions to separate a pair; with fewer it counts as tied. When both are tied, "
              "the lower median minutes per report wins the pair. Errors through is compared only on questions "
              "where both produced a report: a failed run already costs facts right (it counts as 0) and counts "
-             "toward the fit check's limit on runs without a report. The rank is the Copeland score, pairwise "
-             "wins minus losses; equal scores are ordered by facts right, then median minutes, then candidate "
-             "key. The intervals in the table are each card's own, unpaired bootstrap over questions; the "
+             "toward the fit check's limit on runs without a report; per question it is pooled over that "
+             "question's runs. The rank is the Copeland score, pairwise wins minus losses; equal scores are "
+             "ordered first by their head-to-head results (the winner of a pair ranks higher), then by facts "
+             "right, median minutes and candidate key. The intervals in the table are each card's own, "
+             "unpaired bootstrap over questions; the "
              "ranking uses the paired intervals under Pairwise comparisons, so two cards whose intervals "
              "overlap can still be separated.", ""]
     if split != "test":
         lines += [f"This is the {split or '-'} split: the pass line counts only on the test split.", ""]
-    lines += ["| Rank | Candidate | Eval | Candidate key | GGUF sha256 | Fit | Facts right (95% CI) | "
-              "Errors through (95% CI) | Median minutes | Flags | Pass line |",
-              "|---|---|---|---|---|---|---|---|---|---|---|"]
+    lines += [f"Referee failed: the share of the card's statements the referee could not judge (counted as "
+              f"unclear); a card above {_pct(spec.referee.max_referee_failed)} is refused.", "",
+              "| Rank | Candidate | Eval | Candidate key | GGUF sha256 | Fit | Facts right (95% CI) | "
+              "Errors through, pooled (95% CI) | Referee failed | Median minutes | Flags | Pass line |",
+              "|---|---|---|---|---|---|---|---|---|---|---|---|"]
     for number, card in zip(_ranks(cards), cards):
         flags = ", ".join(f for f in card.flags if f != "gpu?") or "-"
         lines.append(f"| {number or '-'} | {card.candidate} | {card.eval_id} | {card.candidate_key} | "
                      f"{card.gguf_sha256[:12] or '-'} | {_fit_cell(card)} | {_with_ci(card.facts_right, card.facts_ci)} | "
-                     f"{_with_ci(card.errors_through, card.errors_ci)} | {_minutes(card.median_minutes)} | {flags} | "
-                     f"{result(card)} |")
+                     f"{_with_ci(card.errors_through, card.errors_ci)} | {_pct(card.referee_failed_share)} | "
+                     f"{_minutes(card.median_minutes)} | {flags} | {result(card)} |")
     pairs = _pairwise_lines(cards)
     if pairs:
         lines += [""] + pairs
@@ -531,16 +609,19 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
         lines += ["", "## Reference (not ranked)", "",
                   "Rows from another writer in the same eval (hybrid: Gemini writes with Tavily search, the "
                   "candidate checks and repairs), scored by the same referee. Not a candidate.", "",
-                  "| Mode | Checked by | Eval | Facts right (95% CI) | Errors through (95% CI) | Median minutes |",
-                  "|---|---|---|---|---|---|"]
+                  "| Mode | Checked by | Eval | Facts right (95% CI) | Errors through, pooled (95% CI) | "
+                  "Referee failed | Median minutes |",
+                  "|---|---|---|---|---|---|---|"]
         for card in reference:
             lines.append(f"| {card.mode} | {card.candidate} | {card.eval_id} | {_with_ci(card.facts_right, card.facts_ci)} | "
-                         f"{_with_ci(card.errors_through, card.errors_ci)} | {_minutes(card.median_minutes)} |")
+                         f"{_with_ci(card.errors_through, card.errors_ci)} | {_pct(card.referee_failed_share)} | "
+                         f"{_minutes(card.median_minutes)} |")
     lines += [""] + _calibration_lines(spec, calibration_md)
     every = list(cards) + list(reference)
     questions = sorted({q for card in every for q in card.per_question})
     if questions:
-        lines += ["", "## Per question", "", "Facts right / errors through / minutes, averaged over runs.", "",
+        lines += ["", "## Per question", "", "Facts right / errors through / minutes; facts and minutes averaged "
+                  "over runs, errors through pooled over the runs' statements.", "",
                   "| Question | " + " | ".join(f"{c.candidate} ({c.mode}, {c.eval_id})" for c in every) + " |",
                   "|---|" + "---|" * len(every)]
         for q in questions:
@@ -556,7 +637,7 @@ def scorecard_markdown(cards: list[Card], spec: BenchSpec, calibration_md: str |
 
 CSV_FIELDS = ("rank", "candidate", "mode", "candidate_key", "eval_id", "bench_version", "split", "gguf_sha256",
               "gguf_file", "fit", "facts_right", "facts_ci_low", "facts_ci_high", "errors_through", "errors_ci_low",
-              "errors_ci_high", "median_minutes", "flags", "passes", "result")
+              "errors_ci_high", "referee_failed_share", "median_minutes", "flags", "passes", "result")
 
 
 def _csv_row(number: str, card: Card) -> dict:
@@ -568,7 +649,7 @@ def _csv_row(number: str, card: Card) -> dict:
             "facts_right": num(card.facts_right), "facts_ci_low": ci(card.facts_ci, 0),
             "facts_ci_high": ci(card.facts_ci, 1), "errors_through": num(card.errors_through),
             "errors_ci_low": ci(card.errors_ci, 0), "errors_ci_high": ci(card.errors_ci, 1),
-            "median_minutes": num(card.median_minutes), "flags": " | ".join(card.flags), "passes": card.passes, "result": result(card)}
+            "referee_failed_share": num(card.referee_failed_share), "median_minutes": num(card.median_minutes), "flags": " | ".join(card.flags), "passes": card.passes, "result": result(card)}
 
 
 def write_scorecard(out: Path, cards: list[Card], spec: BenchSpec, *, calibration_md: str | None = None,

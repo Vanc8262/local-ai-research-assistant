@@ -633,7 +633,9 @@ def cmd_scorecard(settings, args) -> int:
     results = Path(REPO_ROOT) / "results"
     calibration_file = results / f"calibration_v{spec.version}_{spec.referee.tier}.md"
     calibration_md = calibration_file.read_text(encoding="utf-8") if calibration_file.is_file() else None
-    out = Path(args.out) if args.out else results / f"bench_v{spec.version}_scorecard.md"
+    # the test split's scorecard is the bench's result; a dev one is named so it can't pass for it
+    name = f"bench_v{spec.version}_scorecard.md" if test else f"bench_v{spec.version}_{(ranked[0].split if ranked else '') or 'dev'}_scorecard.md"
+    out = Path(args.out) if args.out else results / name
     scorecard.write_scorecard(out, ranked, spec, calibration_md=calibration_md, reference=reference)
     print(out.read_text(encoding="utf-8"))
     print(f"Saved: {out} and {out.with_suffix('.csv')}")
@@ -940,7 +942,8 @@ def main(argv: list[str] | None = None) -> int:
     card = sub.add_parser("scorecard", help="fit, refereed quality and rank of research bench evals")
     card.add_argument("eval_dirs", nargs="+", help="bench eval folders, e.g. runs/eval-20261115-...")
     card.add_argument("--bench", default="evals/bench_v1.toml")
-    card.add_argument("--out", default=None, help="default: results/bench_v<version>_scorecard.md (and .csv)")
+    card.add_argument("--out", default=None, help="default: results/bench_v<version>_scorecard.md (and .csv) for the "
+                      "test split, results/bench_v<version>_dev_scorecard.md for dev")
     claims = sub.add_parser("claims", help="sample the checker's verdicts for labelling, or score the labels")
     claims.add_argument("action", choices=["sample", "score"])
     claims.add_argument("paths", nargs="*", help="sample: eval folders; score: the labelled CSV")

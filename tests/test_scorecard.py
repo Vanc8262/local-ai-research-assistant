@@ -10,7 +10,8 @@ from assistant import scorecard
 from assistant.bench_spec import REFEREE_CAVEAT, PassLine, load_bench
 from assistant.ledger import LEDGER_FIELDS, read_ledger, record_attempt
 from assistant.manifest import sha256_file
-from assistant.scorecard import (Card, ScorecardRefused, build_cards, paired_bootstrap, per_question, rank,
+from assistant.referee import PROMPT_HASH
+from assistant.scorecard import (Card, Pairwise, ScorecardRefused, build_cards, paired_bootstrap, per_question, rank,
                                  referee_family, scorecard_markdown, write_scorecard)
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,8 +20,8 @@ SPEC = load_bench(SPEC_PATH)
 PASS = PassLine(min_facts_right=0.75, max_errors_through=0.05)
 SUMMARY_FIELDS = ("question", "mode", "run", "outcome", "research_s", "verify_s", "repair_s", "min_free_ram_mb",
                   "run_id")
-REFEREE_FIELDS = ("question", "run", "mode", "run_id", "facts_right", "errors_through", "complete",
-                  "referee_sha256", "prompt_version")
+REFEREE_FIELDS = ("question", "run", "mode", "run_id", "statements", "not_supported", "referee_failed", "facts_right",
+                  "errors_through", "complete", "referee_sha256", "prompt_version", "prompt_hash")
 CALIBRATION = """# Referee calibration: referee
 
 **PASS**
@@ -35,9 +36,12 @@ def make_eval(root: Path, name: str, runs: list[dict], *, version=1, split="dev"
               tree_clean=True, offload=(49, 49), referee=True, gguf=None, questions=None, runs_per_q=1,
               spec_sha=None):
     """An eval folder: manifest.json with a bench block, summary.csv, and referee.csv for the ok runs.
-    Each run dict: question, outcome (default ok), minutes, facts, errors, complete, mode, run."""
+    Each run dict: question, outcome (default ok), minutes, facts, errors (the share of `statements`,
+    default 100, that are not_supported), referee_failed (statements), complete, mode, run."""
     out = root / name
     out.mkdir(parents=True)
+    qfile = out / "questions.toml"   # stands in for the question files the eval ran with
+    qfile.write_text("# the questions\n", encoding="utf-8")
     summary, refs = [], []
     for n, r in enumerate(runs):
         run_id = f"{name}-r{n}"
@@ -49,9 +53,13 @@ def make_eval(root: Path, name: str, runs: list[dict], *, version=1, split="dev"
             row["verify_s"] = row["repair_s"] = ""
         summary.append(row)
         if row["outcome"] == "ok":
+            statements, errors = r.get("statements", 100), r.get("errors", 0.02)
             refs.append({"question": r["question"], "run": row["run"], "mode": row["mode"], "run_id": run_id,
-                         "facts_right": r.get("facts", 0.8), "errors_through": r.get("errors", 0.02),
-                         "complete": r.get("complete", True), "referee_sha256": "", "prompt_version": 1})
+                         "statements": statements, "not_supported": round(errors * statements),
+                         "referee_failed": r.get("referee_failed", 0),
+                         "facts_right": r.get("facts", 0.8), "errors_through": errors,
+                         "complete": r.get("complete", True), "referee_sha256": "", "prompt_version": 1,
+                         "prompt_hash": PROMPT_HASH})
     with (out / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=SUMMARY_FIELDS)
         writer.writeheader()
@@ -65,6 +73,7 @@ def make_eval(root: Path, name: str, runs: list[dict], *, version=1, split="dev"
              "candidate_gguf_sha256": "a" * 64, "tree_clean": tree_clean,
              "spec": {"path": "evals/bench_v1.toml", "sha256": spec_sha or sha256_file(SPEC_PATH)},
              "ledger": "results/bench_ledger.csv" if split == "test" else None,
+             "question_files": {str(qfile): sha256_file(qfile)},
              "offload": list(offload) if offload else None}
     ids = questions or list(dict.fromkeys(r["question"] for r in runs if r.get("mode", "local") == "local"))
     manifest = {"git_dirty": True, "runs": runs_per_q, "questions": ids, "bench": bench,
@@ -103,7 +112,8 @@ def test_quality_counts_failed_run_as_zero_facts(tmp_path):
     assert found["q1"]["facts_right"] == pytest.approx(0.7)
     assert found["q1"]["errors_through"] == pytest.approx(0.05)
     assert found["q1"]["minutes"] == pytest.approx(15)
-    assert found["q2"] == {"facts_right": 0.0, "errors_through": None, "minutes": pytest.approx(3)}  # research only
+    assert found["q2"] == {"facts_right": 0.0, "errors_through": None, "minutes": pytest.approx(3),   # research only
+                           "statements": 0, "not_supported": 0, "referee_failed": 0}
     assert per_question(out, mode="hybrid")["q1"]["facts_right"] == 1.0
 
 
@@ -318,7 +328,7 @@ def test_scorecard_refuses_ok_runs_the_referee_has_not_scored(tmp_path):
 
 def test_scorecard_refuses_another_referee_prompt_version(tmp_path):
     out = make_eval(tmp_path, "eval-a", questions(2))
-    text = (out / "referee.csv").read_text(encoding="utf-8").replace(",1\n", ",2\n")
+    text = (out / "referee.csv").read_text(encoding="utf-8").replace(f",1,{PROMPT_HASH}\n", f",2,{PROMPT_HASH}\n")
     (out / "referee.csv").write_text(text, encoding="utf-8")
     with pytest.raises(ScorecardRefused, match="prompt"):
         build_cards([out], SPEC, env={})
@@ -503,7 +513,8 @@ def test_cli_scorecard_default_paths_are_in_the_repo(repo, tmp_path, monkeypatch
     monkeypatch.chdir(elsewhere)
     a = make_eval(tmp_path / "runs", "eval-a", questions(3))
     assert repo(str(a)) == 0
-    written = repo.root / "results" / "bench_v1_scorecard.md"
+    written = repo.root / "results" / "bench_v1_dev_scorecard.md"   # the dev split never takes the test name
+    assert not (repo.root / "results" / "bench_v1_scorecard.md").exists()
     assert "supported recall: 95 of 100" in written.read_text(encoding="utf-8")
     assert written.with_suffix(".csv").is_file() and not (elsewhere / "results").exists()
 
@@ -549,3 +560,156 @@ def test_cli_scorecard_says_how_to_recover_when_the_ledger_is_locked(repo, tmp_p
     assert "Close results/bench_ledger.csv (e.g. in Excel) and run: python -m assistant" in printed
     assert "scorecard" in printed and str(good) in printed
     assert repo.ledger.read_text(encoding="utf-8") == before
+
+
+
+def test_cli_scorecard_test_split_keeps_the_plain_name(repo, tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    attempt(repo.ledger, "eval-good")
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    assert repo(str(good)) == 0
+    assert (repo.root / "results" / "bench_v1_scorecard.md").is_file()
+    assert not (repo.root / "results" / "bench_v1_test_scorecard.md").exists()
+
+
+# --- the question files an eval ran with (I2) ---------------------------------------------------
+
+def test_scorecard_refuses_an_eval_whose_question_file_changed(tmp_path):
+    out = make_eval(tmp_path, "eval-a", questions(3))
+    build_cards([out], SPEC, env={})
+    (out / "questions.toml").write_text("# other questions\n", encoding="utf-8")
+    with pytest.raises(ScorecardRefused, match="eval-a.*questions.toml changed"):
+        build_cards([out], SPEC, env={})
+    (out / "questions.toml").unlink()
+    with pytest.raises(ScorecardRefused, match="gone"):
+        build_cards([out], SPEC, env={})
+
+
+def test_scorecard_reads_relative_question_files_from_the_repo_root(tmp_path):
+    out = make_eval(tmp_path, "eval-a", questions(3))
+    (tmp_path / "evals").mkdir()
+    qfile = tmp_path / "evals" / "q.toml"
+    qfile.write_text("x", encoding="utf-8")
+    manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+    manifest["bench"]["question_files"] = {"evals/q.toml": sha256_file(qfile)}
+    (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    build_cards([out], SPEC, env={}, repo_root=tmp_path)
+    with pytest.raises(ScorecardRefused, match="gone"):
+        build_cards([out], SPEC, env={}, repo_root=tmp_path / "elsewhere")
+
+
+# --- referee failures (I5) and the prompt hash (I6) ---------------------------------------------
+
+def test_card_shows_the_referee_failed_share(tmp_path):
+    out = make_eval(tmp_path, "eval-a", questions(10, statements=100, referee_failed=1) +
+                    [{"question": "q10", "outcome": "no_report"}])
+    (c,), _ = build_cards([out], SPEC, env={})
+    assert c.referee_failed_share == pytest.approx(0.01)   # 10 of 1000 statements
+    text = scorecard_markdown(rank([c], SPEC.pass_line), SPEC, None)
+    assert "Referee failed" in text and "| 1.0% |" in text
+
+
+def test_scorecard_refuses_a_card_above_the_referee_failed_limit(tmp_path):
+    over = make_eval(tmp_path, "eval-a", questions(10, statements=100, referee_failed=3))
+    with pytest.raises(ScorecardRefused, match="eval-a.*3.0%.*2.0%"):
+        build_cards([over], SPEC, env={})
+    at = make_eval(tmp_path, "eval-b", questions(10, statements=100, referee_failed=2))
+    build_cards([at], SPEC, env={})   # 2.0% is not above the limit
+    hybrid = make_eval(tmp_path, "eval-c", questions(3) + questions(3, mode="hybrid", referee_failed=50))
+    with pytest.raises(ScorecardRefused, match="hybrid"):
+        build_cards([hybrid], SPEC, env={})
+
+
+def test_scorecard_refuses_a_referee_csv_without_the_failed_count(tmp_path):
+    out = make_eval(tmp_path, "eval-a", questions(2))
+    with (out / "referee.csv").open(encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    for row in rows:
+        row["referee_failed"] = ""
+    with (out / "referee.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=REFEREE_FIELDS)
+        writer.writeheader()
+        writer.writerows(rows)
+    with pytest.raises(ScorecardRefused, match="referee_failed"):
+        build_cards([out], SPEC, env={})
+
+
+def test_scorecard_refuses_another_prompt_hash_or_referee_file(tmp_path):
+    from dataclasses import replace
+    out = make_eval(tmp_path, "eval-a", questions(2))
+    pinned = replace(SPEC, referee=replace(SPEC.referee, prompt_hash="0" * 64))
+    with pytest.raises(ScorecardRefused, match="prompt hash"):
+        build_cards([out], pinned, env={})
+    build_cards([out], replace(SPEC, referee=replace(SPEC.referee, prompt_hash=PROMPT_HASH)), env={})
+    text = (out / "referee.csv").read_text(encoding="utf-8").replace(",True,,", ",True," + "AB" * 32 + ",")
+    (out / "referee.csv").write_text(text, encoding="utf-8")
+    build_cards([out], replace(SPEC, referee=replace(SPEC.referee, sha256="ab" * 32)), env={})   # any case
+    with pytest.raises(ScorecardRefused, match="another referee file"):
+        build_cards([out], replace(SPEC, referee=replace(SPEC.referee, sha256="cd" * 32)), env={})
+
+
+# --- errors through is pooled (M4) --------------------------------------------------------------
+
+def test_errors_through_is_pooled_over_all_final_statements(tmp_path):
+    """3 of 10 statements on one question and 0 of 90 on the other: pooled 3 of 100 = 3%, where the
+    mean of the per-question shares would say 15%."""
+    out = make_eval(tmp_path, "eval-a", [
+        {"question": "q1", "statements": 10, "errors": 0.3},
+        {"question": "q2", "statements": 90, "errors": 0.0},
+        {"question": "q3", "outcome": "no_report"},
+    ])
+    (c,), _ = build_cards([out], SPEC, env={})
+    assert c.errors_through == pytest.approx(0.03)
+    assert c.per_question["q1"]["errors_through"] == pytest.approx(0.3)   # pairs still compare per question
+    assert c.per_question["q3"]["errors_through"] is None
+    low, high = c.errors_ci
+    assert 0.0 <= low <= 0.03 <= high
+    text = scorecard_markdown(rank([c], SPEC.pass_line), SPEC, None)
+    assert "pooled over all final statements" in text
+
+
+def test_errors_through_pools_the_runs_of_one_question(tmp_path):
+    out = make_eval(tmp_path, "eval-a", [
+        {"question": "q1", "run": 1, "statements": 10, "errors": 0.5},
+        {"question": "q1", "run": 2, "statements": 40, "errors": 0.0},
+    ], runs_per_q=2)
+    found = per_question(out)
+    assert found["q1"]["errors_through"] == pytest.approx(0.1)   # 5 of 50, not the mean 25%
+
+
+def test_the_pass_line_uses_the_pooled_errors_through(tmp_path):
+    many = [{"question": f"q{i:02d}", "statements": 100, "errors": 0.04, "facts": 0.9} for i in range(9)]
+    short = [{"question": "q09", "statements": 4, "errors": 0.5, "facts": 0.9}]   # 2 of 4: a 50% question
+    out = make_eval(tmp_path, "eval-a", many + short)
+    (c,), _ = build_cards([out], SPEC, env={})
+    assert c.errors_through == pytest.approx(38 / 904)   # pooled: under 5%, so it passes
+    assert rank([c], SPEC.pass_line)[0].passes   # the mean of shares (8.6%) would have missed
+
+
+# --- Copeland ties (Da) ------------------------------------------------------------------------
+
+def test_equal_copeland_scores_are_ordered_by_their_head_to_head(monkeypatch):
+    """D beats A, A beats B, B beats C, every other pair tied: A and B both score 0, and A beat B,
+    so A ranks above B even though B has the higher facts right."""
+    d, a = card("D", [0.5] * 10), card("A", [0.6] * 10)
+    b, c = card("B", [0.9] * 10), card("C", [0.4] * 10)
+    wins = {("D", "A"), ("A", "B"), ("B", "C")}
+
+    def fake_pairwise(cards):
+        fits = [x for x in cards if not x.fit]
+        found = []
+        for i, x in enumerate(fits):
+            for y in fits[i + 1:]:
+                winner = x if (x.candidate, y.candidate) in wins else y if (y.candidate, x.candidate) in wins else None
+                found.append(Pairwise(x, y, None, 0, None, 0, winner, "facts right" if winner else "tie"))
+        return found
+    monkeypatch.setattr(scorecard, "pairwise", fake_pairwise)
+    import itertools
+    orders = {tuple(x.candidate for x in rank(list(p), PASS)) for p in itertools.permutations([d, a, b, c])}
+    assert orders == {("D", "A", "B", "C")}
+
+
+def test_ranking_paragraph_names_the_head_to_head_tie_break():
+    text = scorecard_markdown([card("A", [0.9] * 10)], SPEC, None)
+    assert "head-to-head" in text
