@@ -179,3 +179,26 @@ def test_eval_exits_0_only_when_every_run_passes(run, monkeypatch, tmp_path, row
     (out / "summary.md").write_text("# summary\n", encoding="utf-8")
     monkeypatch.setattr(cli, "run_eval", lambda *args, **kwargs: (out, rows))
     assert run(SUPPORTED, "eval", "--questions", str(questions), "--mode", "local") == code
+
+
+@pytest.mark.parametrize("rows, code", [([{"run_id": "r1"}], 0), ([], 1)])
+def test_cli_referee_exit_codes(run, monkeypatch, tmp_path, rows, code):
+    eval_dir = tmp_path / "runs" / "eval-1"
+    eval_dir.mkdir()
+    (eval_dir / "referee.md").write_text("# referee\n", encoding="utf-8")
+    seen = {}
+
+    def fake_score(eval_dir, spec, settings, gateway, **kwargs):
+        seen["tier"] = spec.referee.tier
+        return rows
+    monkeypatch.setattr(cli, "score_eval", fake_score)
+    assert run(SUPPORTED, "referee", str(eval_dir), "--bench", "evals/bench_v1.toml") == code
+    assert seen["tier"] == "referee"
+
+
+def test_cli_referee_pin_error_exits_1(run, monkeypatch, tmp_path, capsys):
+    eval_dir = tmp_path / "runs" / "eval-1"
+    eval_dir.mkdir()
+    monkeypatch.delenv("REFEREE_GGUF", raising=False)
+    assert run(SUPPORTED, "referee", str(eval_dir), "--bench", "evals/bench_v1.toml") == 1
+    assert "REFEREE_GGUF" in capsys.readouterr().out

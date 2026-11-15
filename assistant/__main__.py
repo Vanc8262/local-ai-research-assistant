@@ -17,6 +17,8 @@
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
     python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
+    python -m assistant referee runs/eval-<id> --bench evals/bench_v1.toml
+                                                            judge an eval's reports with the pinned referee
     python -m assistant claims sample runs/eval-<id> ...    sample checker verdicts to label by hand
     python -m assistant claims score results/claim_sample.csv   false-pass and false-removal rates from the labels
     python -m assistant decide probe [-t local]             which decision method works on a local tier
@@ -49,6 +51,8 @@ from .research import SEARCH_TOOLS, run_research
 from .runlog import RunLog, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
+from .bench_spec import BenchSpecError, load_bench
+from .referee import score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
 
@@ -318,6 +322,23 @@ def cmd_rescore(settings, args) -> int:
     return 0 if rows else 1
 
 
+def cmd_referee(settings, args) -> int:
+    """Judge the finished eval's reports with the pinned referee (README: research bench)."""
+    eval_dir = Path(args.eval_dir)
+    log = RunLog(settings.runs_dir, task=f"referee {eval_dir.name}")
+    gateway = Gateway(settings, log)
+    try:
+        rows = score_eval(eval_dir, load_bench(args.bench), settings, gateway)
+    except BenchSpecError as exc:
+        print(f"Referee refused: {exc}")
+        return 1
+    finally:
+        gateway.close()
+    print((eval_dir / "referee.md").read_text(encoding="utf-8"))
+    print(f"Saved: {eval_dir / 'referee.csv'}")
+    return 0 if rows else 1
+
+
 def cmd_claims(settings, args) -> int:
     if args.action == "sample":
         if not args.paths:
@@ -507,6 +528,9 @@ def main(argv: list[str] | None = None) -> int:
     again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
     again.add_argument("--questions", default="evals/research_questions.toml")
+    ref = sub.add_parser("referee", help="judge a finished eval's reports with the pinned bench referee")
+    ref.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261115-...")
+    ref.add_argument("--bench", default="evals/bench_v1.toml")
     snap = evaluate.add_mutually_exclusive_group()
     snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
     snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")
@@ -538,7 +562,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "rescore": cmd_rescore, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "rescore": cmd_rescore, "referee": cmd_referee, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 

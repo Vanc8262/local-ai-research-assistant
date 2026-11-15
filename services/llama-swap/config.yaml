@@ -28,6 +28,10 @@ models:
   "qwen3.5-9b":
     cmd: |
       ${server} -m "${env.QWEN_GGUF}" -c 32768 ${lean}
+  # The bench's pinned judge; REFEREE_GGUF is optional unless you run `assistant referee`.
+  "referee":
+    cmd: |
+      ${server} -m "${env.REFEREE_GGUF}" -c 32768 ${lean}
   "text-embedding-nomic-embed-text-v1.5":
     cmd: |
       ${server} -m "${env.NOMIC_GGUF}" --embedding --pooling mean -c 2048 -b 2048 -ub 2048 -ngl 99 -np 1 -lm mmap -cram 0
@@ -43,3 +47,8 @@ groups:
     swap: true
     exclusive: true
     members: ["qwen3.5-9b"]
+  # The referee loads alone: it unloads the research group while it judges.
+  "referee":
+    swap: true
+    exclusive: true
+    members: ["referee"]

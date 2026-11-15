@@ -22,7 +22,7 @@ from pathlib import Path
 from .config import Settings
 from .sources import CACHE_VERSION
 
-GGUF_ENVS = ("GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF")
+GGUF_ENVS = ("GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF", "REFEREE_GGUF")
 CHUNK = 1 << 20
 
 

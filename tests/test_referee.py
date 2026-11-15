@@ -1,5 +1,6 @@
 """Referee scoring of a saved run folder, with a scripted fake gateway (no model, no network)."""
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -212,3 +213,88 @@ def test_two_sources_one_statement(tmp_path):
     gw = FakeGateway([verdict("not_supported"), verdict("supported", "BM25 uses term frequency to rank documents")])
     s = score_run(run, q([["term frequency"]]), gw, "referee")
     assert s["statements"] == 1 and s["supported"] == 1 and s["not_supported"] == 0 and s["facts_right"] == 1.0
+
+
+# ---- score_eval: a whole eval folder ----
+
+import csv  # noqa: E402
+
+import pytest  # noqa: E402
+
+from assistant.bench_spec import BenchSpecError, load_bench  # noqa: E402
+from assistant.config import Settings  # noqa: E402
+from assistant.referee import score_eval  # noqa: E402
+
+BENCH = Path(__file__).resolve().parent.parent / "evals" / "bench_v1.toml"
+
+
+def eval_folder(tmp_path, outcomes=("ok",)):
+    """An eval folder with one run per outcome; the question file holds question `q`."""
+    runs = tmp_path / "runs"
+    eval_dir = runs / "eval-1"
+    eval_dir.mkdir(parents=True)
+    rows = []
+    for n, outcome in enumerate(outcomes, start=1):
+        run_id = f"r{n}"
+        if outcome == "ok":
+            run = make_run(runs, "# Q\n\nBM25 uses term frequency [1].\n")
+            run.rename(runs / run_id)
+        rows.append({"question": "q", "mode": "local", "run": n, "outcome": outcome, "run_id": run_id})
+    with (eval_dir / "summary.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+        writer.writeheader()
+        writer.writerows(rows)
+    qfile = tmp_path / "qs.toml"
+    qfile.write_text('[[question]]\nid = "q"\ntext = "How does BM25 work?"\n', encoding="utf-8")
+    spec = load_bench(BENCH)
+    spec.questions = {"dev": [str(qfile)], "test": [str(tmp_path / "not_yet.toml")]}   # test file absent: skipped
+    gguf = tmp_path / "ref.gguf"
+    gguf.write_bytes(b"gguf bytes")
+    settings = Settings(runs_dir=runs, default_tier="local")
+    return eval_dir, spec, settings, {"REFEREE_GGUF": str(gguf)}
+
+
+def test_score_eval_refuses_wrong_pin(tmp_path):
+    eval_dir, spec, settings, env = eval_folder(tmp_path)
+    spec.referee.sha256 = "0" * 64
+    gw, reloads = FakeGateway([verdict("supported", "BM25 uses term frequency to rank documents")]), []
+    with pytest.raises(BenchSpecError, match="pinned sha256"):
+        score_eval(eval_dir, spec, settings, gw, env=env, reloader=lambda *a: reloads.append(a))
+    assert gw.calls == 0 and reloads == []
+
+
+def test_score_eval_skips_failed_runs(tmp_path):
+    eval_dir, spec, settings, env = eval_folder(tmp_path, outcomes=("ok", "no_report"))
+    gw, reloads = FakeGateway([verdict("supported", "BM25 uses term frequency to rank documents")]), []
+    rows = score_eval(eval_dir, spec, settings, gw, env=env, reloader=lambda s, t: reloads.append(t))
+    assert [r["run_id"] for r in rows] == ["r1"] and reloads == ["referee"]   # candidate unloaded once
+    with (eval_dir / "referee.csv").open(encoding="utf-8") as handle:
+        written = list(csv.DictReader(handle))
+    assert [r["run_id"] for r in written] == ["r1"]
+    assert written[0]["supported"] == "1" and written[0]["referee_sha256"]
+    text = (eval_dir / "referee.md").read_text(encoding="utf-8")
+    assert REFEREE_CAVEAT in text and "| q |" in text
+
+
+def test_score_eval_reuses_existing_referee_json(tmp_path):
+    eval_dir, spec, settings, env = eval_folder(tmp_path)
+    reply = verdict("supported", "BM25 uses term frequency to rank documents")
+    first = FakeGateway([reply])
+    score_eval(eval_dir, spec, settings, first, env=env, reloader=lambda *a: None)
+    assert first.calls == 1
+    again = FakeGateway([reply])
+    rows = score_eval(eval_dir, spec, settings, again, env=env, reloader=lambda *a: None)
+    assert again.calls == 0 and rows[0]["supported"] == 1
+    # a different referee file is not the same judge: judged again
+    other = tmp_path / "other.gguf"
+    other.write_bytes(b"other bytes")
+    third = FakeGateway([reply])
+    score_eval(eval_dir, spec, settings, third, env={"REFEREE_GGUF": str(other)}, reloader=lambda *a: None)
+    assert third.calls == 1
+
+
+def test_score_eval_unknown_question_id(tmp_path):
+    eval_dir, spec, settings, env = eval_folder(tmp_path)
+    (tmp_path / "qs.toml").write_text('[[question]]\nid = "other"\ntext = "x"\n', encoding="utf-8")
+    with pytest.raises(BenchSpecError, match="'q'"):
+        score_eval(eval_dir, spec, settings, FakeGateway([]), env=env, reloader=lambda *a: None)

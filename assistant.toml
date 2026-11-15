@@ -65,6 +65,17 @@ temperature = 0.6
 max_tokens = 6000
 extra_body = { top_p = 0.95, top_k = 20, min_p = 0.0, presence_penalty = 0.0 }
 
+# The research bench's referee (evals/bench_v1.toml pins its GGUF by sha256; REFEREE_GGUF names the file).
+# Not in bench.toml, so the sampling-match test skips it. Deterministic: temperature 0, fixed seed.
+[tiers.referee]
+kind = "local"
+label = "Referee (pinned, see evals/bench_v1.toml)"
+base_url = "http://127.0.0.1:1234/v1"
+model = "referee"
+temperature = 0.0
+max_tokens = 4000
+extra_body = { seed = 20261115 }
+
 # Free cloud tier: Gemini through Google's OpenAI-compatible endpoint.
 # On the free tier Google may use prompts to improve its products, so private
 # code never goes here (enforced by the gateway; see assistant/gateway.py).

@@ -6,12 +6,16 @@ fetches or searches. Every call is private, so a private prompt can never reach 
 """
 from __future__ import annotations
 
+import csv
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-from .bench_spec import REFEREE_CAVEAT
-from .evaluate import Question, fact_pattern
+from .bench_spec import REFEREE_CAVEAT, BenchSpec, BenchSpecError, check_referee_pin
+from .config import Settings
+from .evaluate import Question, fact_pattern, load_questions, reload_model
+from .manifest import sha256_file
 from .text import best_passages
 from .verify import quote_in_source, split_claims, squash
 
@@ -175,3 +179,83 @@ def score_run(run_dir: Path, question: Question, gateway, tier: str) -> dict:
                        for s, v in zip(found, verdicts)],
         "judgements": [asdict(j) for j in judgements]}, indent=2), encoding="utf-8")
     return summary
+
+
+SCORE_KEYS = ("statements", "cited", "uncited", "supported", "not_supported", "unclear",
+              "referee_errors", "facts_right", "errors_through", "prompt_version", "referee_sha256", "complete")
+
+
+def _bench_questions(spec: BenchSpec) -> dict[str, Question]:
+    """Every question of every split by id. A file that doesn't exist yet is skipped."""
+    found: dict[str, Question] = {}
+    for paths in spec.questions.values():
+        for path in paths:
+            if Path(path).is_file():
+                found.update({q.id: q for q in load_questions(path)})
+    return found
+
+
+def _referee_sha256(spec: BenchSpec, env, hasher) -> str:
+    """The hash of the referee file in use: the pinned one (the pin check just proved it)."""
+    return spec.referee.sha256 or hasher(Path(env[spec.referee.gguf_env]))
+
+
+def _earlier_summary(run_dir: Path, spec: BenchSpec, sha: str) -> dict | None:
+    """The run's referee.json summary when the same prompt version and referee file made it."""
+    path = run_dir / "referee.json"
+    if not path.is_file():
+        return None
+    try:
+        summary = json.loads(path.read_text(encoding="utf-8"))["summary"]
+    except (ValueError, KeyError):
+        return None
+    same = summary.get("prompt_version") == spec.referee.prompt_version and summary.get("referee_sha256") == sha
+    return summary if same else None
+
+
+def score_eval(eval_dir: Path, spec: BenchSpec, settings: Settings, gateway, *, env=os.environ,
+               reloader=reload_model, hasher=sha256_file) -> list[dict]:
+    """Referee every run of a finished eval that ended with a report; write referee.csv and referee.md.
+
+    The pin is checked first, so a wrong file judges nothing. The candidate model is unloaded once,
+    so the referee loads fresh. A run folder whose referee.json came from the same prompt version
+    and the same referee file is reused. PrivacyError and TierNotReady propagate."""
+    eval_dir = Path(eval_dir)
+    check_referee_pin(spec, env, hasher)
+    sha = _referee_sha256(spec, env, hasher)
+    questions = _bench_questions(spec)
+    with (eval_dir / "summary.csv").open(encoding="utf-8") as handle:
+        wanted = [row for row in csv.DictReader(handle) if row.get("outcome") == "ok"]
+    for row in wanted:
+        if row["question"] not in questions:
+            raise BenchSpecError(f"question '{row['question']}' of {eval_dir.name} is in no question "
+                                 "file of the bench spec")
+    reloader(settings, spec.referee.tier)
+    rows = []
+    for row in wanted:
+        run_dir = Path(settings.runs_dir) / row["run_id"]
+        summary = _earlier_summary(run_dir, spec, sha)
+        if summary is None:
+            summary = score_run(run_dir, questions[row["question"]], gateway, spec.referee.tier)
+            summary["referee_sha256"] = sha
+            path = run_dir / "referee.json"
+            data = json.loads(path.read_text(encoding="utf-8"))
+            data["summary"] = summary
+            path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        rows.append({"question": row["question"], "run": row.get("run", ""), "mode": row.get("mode", ""),
+                     "run_id": row["run_id"], **{key: summary.get(key) for key in SCORE_KEYS}})
+    fields = ("question", "run", "mode", "run_id", *SCORE_KEYS)
+    with (eval_dir / "referee.csv").open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+    (eval_dir / "referee.md").write_text(referee_markdown(eval_dir.name, rows), encoding="utf-8")
+    return rows
+
+
+def referee_markdown(name: str, rows: list[dict]) -> str:
+    lines = [f"# Referee scores: {name}", "", REFEREE_CAVEAT, "",
+             "| question | run | facts_right | errors_through | complete |", "|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(f"| {r['question']} | {r['run']} | {r['facts_right']} | {r['errors_through']} | {r['complete']} |")
+    return "\n".join(lines) + "\n"

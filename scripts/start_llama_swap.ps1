@@ -31,6 +31,13 @@ $env:GEMMA_GGUF = Find-One $Models "*gemma-4-E4B*q4_0*.gguf" "Gemma 4 E4B QAT"
 $env:QWEN_GGUF = Find-One $Models "*Qwen3.5-9B*Q4_K_M*.gguf" "Qwen3.5 9B Q4_K_M"
 $env:NOMIC_GGUF = Find-One $Models "*nomic-embed-text-v1.5*.gguf" "nomic-embed-text v1.5"
 
+# The bench referee is optional: set REFEREE_GGUF to its file before starting (it is passed through
+# to llama-swap as is); `assistant referee` checks it against the pin in evals\bench_v1.toml.
+if ($env:REFEREE_GGUF) {
+    if (-not (Test-Path $env:REFEREE_GGUF)) { throw "REFEREE_GGUF does not exist: $env:REFEREE_GGUF" }
+    Write-Host "Referee: $env:REFEREE_GGUF"
+}
+
 $swap = (Get-Command llama-swap -ErrorAction SilentlyContinue).Source
 if (-not $swap) {
     $swap = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages") -Recurse -File `
