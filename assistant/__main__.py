@@ -301,7 +301,9 @@ def cmd_eval(settings, args) -> int:
     # offline mode runs by default only once Kiwix copies are configured
     modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
     out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
-                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions)
+                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions,
+                              snapshot_dir=args.record_search or args.replay_search,
+                              snapshot_mode="replay" if args.replay_search else "record")
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
@@ -483,6 +485,9 @@ def main(argv: list[str] | None = None) -> int:
     again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
     again.add_argument("--questions", default="evals/research_questions.toml")
+    snap = evaluate.add_mutually_exclusive_group()
+    snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
+    snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")
     dec = sub.add_parser("decide", help="fast local decisions: probe the methods, or score the labelled cases")
     dec.add_argument("action", choices=("probe", "check"))
     dec.add_argument("-t", "--tier", action="append", help="local tier; repeat to compare (default: the default tier)")

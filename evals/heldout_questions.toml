@@ -1,0 +1,172 @@
+# Held-out Stage 2 questions, written 2026-11-15 after the eval review (reports/eval-review-2026-11-14.md).
+# Nothing in the code, the checker, the decider or the codex was tuned on these, and nothing should be:
+# run them on frozen code, once per mode, and keep any fix they suggest out of the numbers they gave.
+#
+# All are public (they may run hybrid and use the Tavily fallback). None is marked codex, because the
+# codex holds no primary sources for them. `expect` follows research_questions.toml: whole words,
+# case-insensitive, optional plural "s", in the report body only; any one spelling in a group counts.
+# Each group is a fact a correct answer states, not a word any answer would use.
+#
+#   python -m assistant eval --questions evals/heldout_questions.toml --runs 1 --mode local --mode hybrid \
+#       --record-search runs/snapshots/heldout
+
+[[question]]
+public = true
+id = "bm25"
+topic = "rag"
+text = "What is BM25, and what do its k1 and b parameters control?"
+expect = [["term frequency"], ["document length", "length normalization", "length normalisation"],
+          ["inverse document frequency", "IDF"], ["saturation", "saturates"]]
+
+[[question]]
+public = true
+id = "hnsw"
+topic = "rag"
+text = "How does the HNSW index find approximate nearest neighbours in a vector database?"
+expect = [["small world", "small-world"], ["hierarchical", "layers", "multi-layer"], ["greedy"],
+          ["ef_search", "efSearch", "ef_construction", "efConstruction"]]
+
+[[question]]
+public = true
+id = "flash-attention"
+topic = "ai-llm"
+text = "How does FlashAttention speed up attention in transformers?"
+expect = [["tiling", "tiles", "tile"], ["SRAM"], ["HBM", "high bandwidth memory", "high-bandwidth memory"],
+          ["recomputation", "recompute", "recomputes"]]
+
+[[question]]
+public = true
+id = "rope"
+topic = "ai-llm"
+text = "What is rotary position embedding (RoPE), and why do many LLMs use it?"
+expect = [["rotation", "rotates", "rotating"], ["relative position", "relative positions"],
+          ["sine", "sinusoidal", "cosine"], ["query and key", "queries and keys"]]
+
+[[question]]
+public = true
+id = "kv-cache"
+topic = "local-models"
+text = "What is the KV cache in LLM inference, and how does it trade memory for speed?"
+expect = [["keys and values", "key and value", "key-value"], ["previous tokens", "past tokens", "earlier tokens"],
+          ["sequence length", "context length"]]
+
+[[question]]
+public = true
+id = "speculative-decoding"
+topic = "local-models"
+text = "How does speculative decoding speed up LLM text generation?"
+expect = [["draft model", "smaller model", "draft"], ["verify", "verifies", "verified", "verification"],
+          ["accepted", "accepts", "acceptance", "rejected"], ["parallel", "single forward pass", "one forward pass"]]
+
+[[question]]
+public = true
+id = "moe-routing"
+topic = "ai-llm"
+text = "How do mixture-of-experts language models decide which experts process each token?"
+expect = [["router", "gating network", "gate"], ["top-k", "top-2", "top-1", "top k"],
+          ["load balancing", "load-balancing", "auxiliary loss"]]
+
+[[question]]
+public = true
+id = "dpo"
+topic = "ai-llm"
+text = "How does Direct Preference Optimization (DPO) differ from RLHF with PPO?"
+expect = [["reward model"], ["reference model", "reference policy"],
+          ["preferred and rejected", "chosen and rejected", "preference pairs", "pairs of responses"],
+          ["reinforcement learning"]]
+
+[[question]]
+public = true
+id = "react-pattern"
+topic = "ai-llm"
+text = "What is the ReAct prompting pattern for LLM agents?"
+expect = [["reasoning"], ["action", "acting"], ["observation"], ["thought"]]
+
+[[question]]
+public = true
+id = "free-threaded-python"
+topic = "python"
+text = "What is free-threaded Python, and what does PEP 703 change?"
+expect = [["GIL", "global interpreter lock"], ["3.13"], ["experimental", "optional build", "separate build"],
+          ["python3.13t", "3.13t", "free-threaded build"]]
+
+[[question]]
+public = true
+id = "pandas-arrow"
+topic = "data"
+text = "What does pandas 2.0 add with its PyArrow-backed data types?"
+expect = [["dtype_backend", "ArrowDtype", "pyarrow"], ["copy-on-write", "copy on write"],
+          ["missing values", "nullable"]]
+
+[[question]]
+public = true
+id = "polars-lazy"
+topic = "data"
+text = "How does Polars' lazy API differ from its eager API?"
+expect = [["query plan", "query optimizer", "query optimization", "query optimisation"], ["collect"],
+          ["predicate pushdown", "projection pushdown"]]
+
+[[question]]
+public = true
+id = "cap-theorem"
+topic = "cloud"
+text = "What does the CAP theorem say about distributed data stores?"
+expect = [["consistency"], ["availability"], ["partition tolerance", "network partition"],
+          ["two of the three", "two out of three", "only two"]]
+
+[[question]]
+public = true
+id = "k8s-hpa"
+topic = "cloud"
+text = "How does the Kubernetes Horizontal Pod Autoscaler decide how many replicas to run?"
+expect = [["CPU utilization", "CPU utilisation", "CPU usage"], ["metrics server", "metrics-server", "metrics API"],
+          ["desiredReplicas", "desired replicas"], ["target utilization", "target utilisation", "target value", "target average"]]
+
+[[question]]
+public = true
+id = "terraform-state"
+topic = "cloud"
+text = "What is Terraform state, and why does it need locking?"
+expect = [["terraform.tfstate", "state file"], ["remote backend", "backend"], ["concurrent", "at the same time", "simultaneous"],
+          ["DynamoDB", "Consul", "lock file", "state lock"]]
+
+[[question]]
+public = true
+id = "shap"
+topic = "ml"
+text = "How do SHAP values explain a machine learning model's predictions?"
+expect = [["Shapley"], ["game theory", "cooperative game", "game-theoretic"], ["contribution", "contributions"],
+          ["additive"]]
+
+[[question]]
+public = true
+id = "k-fold-cv"
+topic = "ml"
+text = "What is k-fold cross-validation, and why is it used?"
+expect = [["folds", "subsets", "equal parts"], ["overfitting", "overfit", "generalize", "generalise", "generalization"],
+          ["averaged", "average performance", "average score", "mean score", "mean performance", "average of"]]
+
+[[question]]
+public = true
+id = "hyde"
+topic = "rag"
+text = "What is HyDE (Hypothetical Document Embeddings) in retrieval?"
+expect = [["hypothetical document", "hypothetical answer"], ["embedding", "embeddings", "embedded"],
+          ["zero-shot"]]
+
+[[question]]
+public = true
+id = "cross-encoder-rerank"
+topic = "rag"
+text = "What does a cross-encoder reranker add to a retrieval pipeline?"
+expect = [["bi-encoder", "bi encoder", "dual encoder"], ["query-document pair", "query and document together", "jointly",
+           "concatenated", "full attention", "cross-attention"],
+          ["slower", "latency", "expensive", "cost"]]
+
+[[question]]
+public = true
+id = "gptq-awq"
+topic = "local-models"
+text = "How do the GPTQ and AWQ quantization methods for LLM weights differ?"
+expect = [["second-order", "Hessian"], ["activation", "activations"], ["salient", "important weights", "1%"],
+          ["4-bit", "4 bit", "int4"]]

@@ -85,6 +85,8 @@ def test_eval_runs_each_mode_verifies_locally_and_scores(tmp_path, monkeypatch):
         assert len(list(csv.DictReader(handle))) == 2
     summary = (out_dir / "summary.md").read_text()
     assert "**local:** 1 reports" in summary and "1 pass the gate" in summary
+    assert "**local vs hybrid, paired by question and run:** 1 pairs; both pass 1" in summary
+    assert "95% Wilson interval" in summary
 
 
 def test_a_mode_that_cannot_run_is_recorded_not_fatal(tmp_path, monkeypatch):
@@ -297,3 +299,11 @@ def test_gate_fails_unchecked_few_claims_low_accuracy_before_and_too_many_change
     assert gate_failures(clean, summary_of(20, 0.9), removed=2, rewritten=2, facts=1.0) == ["changed_share"]
     # a long report: 6 of 65 is 9%, under the share cap but over the count cap
     assert gate_failures(summary_of(59, 1.0), summary_of(65, 0.9), removed=6, rewritten=0, facts=1.0) == ["changed_count"]
+
+
+def test_heldout_questions_load_and_are_new():
+    heldout = load_questions(ROOT / "evals" / "heldout_questions.toml")
+    tuned = load_questions(ROOT / "evals" / "research_questions.toml")
+    assert len(heldout) == 20 and len({q.id for q in heldout}) == 20
+    assert not {q.id for q in heldout} & {q.id for q in tuned}
+    assert all(q.public and not q.codex and len(q.expect) >= 3 for q in heldout)

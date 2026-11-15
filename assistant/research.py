@@ -97,9 +97,10 @@ def build_overrides(settings: Settings, *, tier: str, search: str, proxy_url: st
 def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | None = None,
                  search: str = "searxng", public: bool = False, mode: str = "quick",
                  runner: list[str] | None = None, transport=None,
-                 public_search: bool = False) -> ResearchResult:
+                 public_search: bool = False, snapshot=None) -> ResearchResult:
     """public_search: the question itself is public, so a search query may leave this PC
-    (the Tavily fallback) even though the prompt, and so the model tier, stays private."""
+    (the Tavily fallback) even though the prompt, and so the model tier, stays private.
+    snapshot: a snapshot.SearchSnapshot that records or replays the page searches."""
     tier = tier or settings.default_tier
     run_dir = Path(settings.runs_dir) / log.run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -141,12 +142,19 @@ def run_research(settings: Settings, query: str, log: RunLog, *, tier: str | Non
         secret = secret or fallback_key
         router = make_router(settings, offline=offline) if settings.search.router or offline else None
 
-        def page_search(text: str) -> list[dict]:
+        def live_search(text: str, status: list) -> list[dict]:
             from .web_pages import search_pages   # see web_pages.py for why this runs here, not in LDR
+            return search_pages(settings.searxng_url, text, settings.research.web_pages,
+                                transport=transport, tavily_key=fallback_key, router=router,
+                                offline=offline, status=status)
+
+        def page_search(text: str) -> list[dict]:
             started, status = time.perf_counter(), []
-            results = search_pages(settings.searxng_url, text, settings.research.web_pages,
-                                   transport=transport, tavily_key=fallback_key, router=router,
-                                   offline=offline, status=status)
+            if snapshot is None:
+                results = live_search(text, status)
+            else:   # record: search and save; replay: answer from the saved searches, no network
+                results = snapshot.wrap(lambda t: live_search(t, status))(text)
+                status.append({"source": f"snapshot-{snapshot.mode}", "hits": len(results), **snapshot.counts})
             engines = sorted({r["engine"] for r in results})
             layers = {layer: sum(r.get("layer") == layer for r in results)
                       for layer in ("offline", "live", "bonus", "cloud") if any(r.get("layer") == layer for r in results)}
