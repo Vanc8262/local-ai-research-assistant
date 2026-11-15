@@ -506,3 +506,46 @@ def test_cli_scorecard_default_paths_are_in_the_repo(repo, tmp_path, monkeypatch
     written = repo.root / "results" / "bench_v1_scorecard.md"
     assert "supported recall: 95 of 100" in written.read_text(encoding="utf-8")
     assert written.with_suffix(".csv").is_file() and not (elsewhere / "results").exists()
+
+
+def test_cli_scorecard_refuses_to_change_a_final_status(repo, tmp_path, capsys):
+    """A missed attempt can't be scored again as passed (say, after the referee.csv was edited)."""
+    from assistant.ledger import finish_attempt
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    attempt(repo.ledger, "eval-good")
+    finish_attempt(repo.ledger, "eval-good", "missed")
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    before = repo.ledger.read_text(encoding="utf-8")
+    out = tmp_path / "card.md"
+    assert repo(str(good), "--out", str(out)) == 1
+    printed = capsys.readouterr().out
+    assert "Scorecard refused" in printed and "eval-good" in printed and "already missed" in printed
+    assert "Traceback" not in printed
+    assert repo.ledger.read_text(encoding="utf-8") == before and not out.exists()
+
+
+def test_cli_scorecard_run_again_with_the_same_result_is_fine(repo, tmp_path):
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    attempt(repo.ledger, "eval-good")
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    out = tmp_path / "card.md"
+    assert repo(str(good), "--out", str(out)) == 0
+    assert repo(str(good), "--out", str(out)) == 0
+    assert [r["status"] for r in read_ledger(repo.ledger)] == ["passed"]
+
+
+def test_cli_scorecard_says_how_to_recover_when_the_ledger_is_locked(repo, tmp_path, monkeypatch, capsys):
+    from assistant import ledger as ledger_module
+    good = make_eval(tmp_path / "runs", "eval-good", questions(10, facts=0.9, errors=0.01), split="test")
+    attempt(repo.ledger, "eval-good")
+    repo.state["head"] = repo.ledger.read_text(encoding="utf-8").strip()
+    before = repo.ledger.read_text(encoding="utf-8")
+
+    def locked(src, dst):
+        raise PermissionError(13, "The process cannot access the file", str(dst))
+    monkeypatch.setattr(ledger_module.os, "replace", locked)
+    assert repo(str(good), "--out", str(tmp_path / "card.md")) == 1
+    printed = capsys.readouterr().out
+    assert "Close results/bench_ledger.csv (e.g. in Excel) and run: python -m assistant" in printed
+    assert "scorecard" in printed and str(good) in printed
+    assert repo.ledger.read_text(encoding="utf-8") == before

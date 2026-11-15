@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
@@ -63,7 +64,8 @@ from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
 from .bench_spec import REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, load_bench
-from .ledger import DEFAULT_LEDGER, RetestLimit, check_attempt, finish_attempt, read_ledger, record_attempt
+from .ledger import (DEFAULT_LEDGER, AttemptFinal, RetestLimit, check_attempt, finish_attempt, finish_attempts,
+                     read_ledger, record_attempt)
 from .manifest import REPO_ROOT, _git, sha256_file
 from .referee import PROMPT_VERSION, score_eval
 from .verify import CAVEAT, failures, verify_run
@@ -473,19 +475,41 @@ def _bench_plan(settings, args) -> dict:
             "commit": commit, "bench": bench}
 
 
+def _command(args) -> str:
+    """The command line that ran this, to repeat after fixing something."""
+    return subprocess.list2cmdline(["python", "-m", "assistant", *getattr(args, "argv", [])])
+
+
+def _ledger_locked(exc: OSError, command: str) -> None:
+    print(f"Could not write {DEFAULT_LEDGER}: {exc}")
+    print(f"Close {DEFAULT_LEDGER} (e.g. in Excel) and run: {command}")
+
+
+def _mark_error_command(eval_id: str) -> str:
+    return (f'python -c "from assistant.ledger import finish_attempt; '
+            f"finish_attempt('{DEFAULT_LEDGER}', '{eval_id}', 'error')\"")
+
+
 def _bench_eval(settings, args, plan: dict) -> int:
     """Run the candidate. On the test split the attempt goes in the ledger before the first
-    question, and is marked "error" if the eval raises or any run has no checked report; the
-    referee (`assistant referee`) decides passed or missed later."""
+    question, and is marked "error" if the eval raises or any of the candidate's own (local) runs
+    has no checked report; a failed hybrid reference row doesn't count. The scorecard decides passed
+    or missed later. A ledger that can't be written (open in Excel) is reported with the command to
+    run once it is closed; it never hides an exception from the eval itself."""
     spec, bench, ledger = plan["spec"], plan["bench"], Path(args.ledger)
     settings.research.tavily_fallback = spec.tavily_fallback and not args.no_tavily
     eval_id = new_run_id()
     attempt = f"eval-{eval_id}"
     if plan["test"]:
-        record_attempt(ledger, {"bench_version": spec.version, "candidate": bench["candidate"],
-                                "candidate_key": bench["candidate_key"], "gguf_sha256": bench["candidate_gguf_sha256"],
-                                "git_commit": plan["commit"], "split": "test", "eval_id": attempt,
-                                "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        try:
+            record_attempt(ledger, {"bench_version": spec.version, "candidate": bench["candidate"],
+                                    "candidate_key": bench["candidate_key"],
+                                    "gguf_sha256": bench["candidate_gguf_sha256"], "git_commit": plan["commit"],
+                                    "split": "test", "eval_id": attempt,
+                                    "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        except OSError as exc:   # nothing has run yet: the same command starts the attempt
+            _ledger_locked(exc, _command(args))
+            return 1
     try:
         base_url = settings.tier(plan["tier"]).base_url
         out_dir, rows = run_eval(settings, plan["questions"], plan["modes"], verify_tier=args.verify_tier,
@@ -494,10 +518,19 @@ def _bench_eval(settings, args, plan: dict) -> int:
                                  offload_probe=lambda: parse_offload(fetch_llama_swap_log(base_url)))
     except BaseException:   # a crash or Ctrl-C still used up the attempt
         if plan["test"]:
-            finish_attempt(ledger, attempt, "error")
+            try:
+                finish_attempt(ledger, attempt, "error")
+            except OSError as exc:   # report it, then re-raise the eval's own exception
+                _ledger_locked(exc, _mark_error_command(attempt))
         raise
-    if plan["test"] and (not rows or any(r.get("outcome") != "ok" for r in rows)):
-        finish_attempt(ledger, attempt, "error")
+    own = [r for r in rows if (r.get("mode") or "local") == "local"]
+    if plan["test"] and (not own or any(r.get("outcome") != "ok" for r in own)):
+        try:
+            finish_attempt(ledger, attempt, "error")
+        except OSError as exc:
+            _eval_result(out_dir, rows)
+            _ledger_locked(exc, _mark_error_command(attempt))
+            return 1
     code = _eval_result(out_dir, rows)
     if plan["test"]:
         print(f"Test attempt {attempt} is in {ledger}; commit that file.")
@@ -532,11 +565,17 @@ def cmd_referee(settings, args) -> int:
     return 0 if rows and not incomplete else 1
 
 
+def _scored(card) -> str:
+    return "passed" if card.passes else "missed"
+
+
 def cmd_scorecard(settings, args) -> int:
     """Fit, refereed quality and rank of bench evals (assistant/scorecard.py). Exit 1 when refused.
     On the test split, every eval's attempt must already be in the committed ledger at HEAD and in
     the working ledger; only then is anything written. Each attempt is marked passed or missed in
     results/bench_ledger.csv (one already marked "error" stays so), which is to be committed next.
+    A final status never changes: an attempt already passed or missed that now scores the other way
+    is refused before anything is written.
     The default output and the calibration report live in the repo's results/, whatever the cwd."""
     spec_path = Path(args.bench)
     try:
@@ -559,6 +598,11 @@ def cmd_scorecard(settings, args) -> int:
             return 1
         for card in ranked:
             card.ledger_status = status[card.eval_id]
+        changed = [f"{c.eval_id} is already {c.ledger_status}, not {_scored(c)}" for c in ranked
+                   if c.ledger_status in ("passed", "missed") and c.ledger_status != _scored(c)]
+        if changed:   # a final status never changes (assistant/ledger.py)
+            print(f"Scorecard refused: {'; '.join(changed)} in {DEFAULT_LEDGER}; a final status is not changed")
+            return 1
     results = Path(REPO_ROOT) / "results"
     calibration_file = results / f"calibration_v{spec.version}_{spec.referee.tier}.md"
     calibration_md = calibration_file.read_text(encoding="utf-8") if calibration_file.is_file() else None
@@ -567,8 +611,14 @@ def cmd_scorecard(settings, args) -> int:
     print(out.read_text(encoding="utf-8"))
     print(f"Saved: {out} and {out.with_suffix('.csv')}")
     if test:
-        for card in ranked:
-            finish_attempt(ledger, card.eval_id, "passed" if card.passes else "missed")
+        try:   # one write for every attempt; an attempt marked "error" keeps it
+            finish_attempts(ledger, {c.eval_id: _scored(c) for c in ranked if c.ledger_status != "error"})
+        except AttemptFinal as exc:   # changed since the check above
+            print(f"Scorecard refused: {exc}")
+            return 1
+        except OSError as exc:
+            _ledger_locked(exc, _command(args))
+            return 1
         kept = sum(c.ledger_status == "error" for c in ranked)
         print(f"Marked {len(ranked) - kept} test attempts passed or missed in {DEFAULT_LEDGER}"
               + (f" ({kept} already marked error, kept as error)" if kept else "") + "; commit that file.")
@@ -879,6 +929,7 @@ def main(argv: list[str] | None = None) -> int:
     store.add_argument("--picks", default="vault.toml", help="the models chosen for the vault")
     store.add_argument("--only", nargs="+", metavar="NAME", help="sync: just these picks")
     args = parser.parse_args(argv)
+    args.argv = list(sys.argv[1:] if argv is None else argv)
     if args.command == "vault" and args.action == "sync":
         args.names = args.only or []
 

@@ -5,8 +5,9 @@ from pathlib import Path
 import pytest
 
 from assistant import __main__ as cli
-from assistant.ledger import (LEDGER_FIELDS, MAX_TEST_ATTEMPTS, RetestLimit, check_attempt, finish_attempt,
-                              read_ledger, record_attempt)
+from assistant import ledger as ledger_module
+from assistant.ledger import (FINAL_STATUSES, LEDGER_FIELDS, MAX_TEST_ATTEMPTS, AttemptFinal, RetestLimit,
+                              check_attempt, finish_attempt, finish_attempts, read_ledger, record_attempt)
 from assistant.manifest import sha256_file
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -371,10 +372,18 @@ def test_candidate_without_bench_exits_2(tmp_path, capsys):
     assert "--bench" in capsys.readouterr().out
 
 
-def test_shipped_ledger_is_header_only():
+def test_shipped_ledger_is_well_formed():
+    """The committed ledger: the header is LEDGER_FIELDS, and every row has every field, a known status
+    and a whole-number bench version (rows are added by test-split attempts, so it need not be empty)."""
     with (ROOT / "results" / "bench_ledger.csv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
-    assert rows == [list(LEDGER_FIELDS)]
+    assert rows[0] == list(LEDGER_FIELDS)
+    for row in rows[1:]:
+        assert len(row) == len(LEDGER_FIELDS), row
+        record = dict(zip(LEDGER_FIELDS, row))
+        assert record["status"] in ("started", *FINAL_STATUSES), row
+        assert record["bench_version"].isdigit() and record["split"] == "test", row
+        assert record["eval_id"].startswith("eval-") and record["candidate_key"] and record["started_utc"], row
 
 
 def test_bench_eval_probes_the_candidate_tier_for_gpu_offload(bench, monkeypatch):
@@ -386,9 +395,121 @@ def test_bench_eval_probes_the_candidate_tier_for_gpu_offload(bench, monkeypatch
     assert probe() == (40, 49) and seen == ["http://127.0.0.1:1234/v1"]
 
 
-def test_finish_attempt_keeps_an_error(tmp_path):
+def test_a_final_status_never_changes(tmp_path):
+    """Only "started" changes. passed, missed and error are final: the same status again is a no-op,
+    another one is refused, so a miss can't be turned into a pass (nor an error into either)."""
     led = tmp_path / "l.csv"
     record_attempt(led, _row("k1", eval_id="eval-a"))
-    finish_attempt(led, "eval-a", "error")
-    finish_attempt(led, "eval-a", "passed")
-    assert [r["status"] for r in read_ledger(led)] == ["error"]
+    record_attempt(led, _row("k2", eval_id="eval-b"))
+    finish_attempt(led, "eval-a", "missed")
+    finish_attempt(led, "eval-b", "error")
+    before = led.read_text(encoding="utf-8")
+    finish_attempt(led, "eval-a", "missed")   # the same again: nothing changes
+    assert led.read_text(encoding="utf-8") == before
+    with pytest.raises(AttemptFinal, match="eval-a.*missed.*passed"):
+        finish_attempt(led, "eval-a", "passed")
+    with pytest.raises(AttemptFinal, match="eval-b.*error"):
+        finish_attempt(led, "eval-b", "passed")
+    assert led.read_text(encoding="utf-8") == before
+
+
+def test_finish_attempts_writes_all_or_nothing(tmp_path):
+    led = tmp_path / "l.csv"
+    for name in ("eval-a", "eval-b", "eval-c"):
+        record_attempt(led, _row(name, eval_id=name))
+    finish_attempt(led, "eval-c", "passed")
+    before = led.read_text(encoding="utf-8")
+    with pytest.raises(AttemptFinal, match="eval-c"):
+        finish_attempts(led, {"eval-a": "passed", "eval-c": "missed"})
+    assert led.read_text(encoding="utf-8") == before   # eval-a was not marked either
+    finish_attempts(led, {"eval-a": "passed", "eval-b": "missed", "eval-c": "passed"})
+    assert [r["status"] for r in read_ledger(led)] == ["passed", "missed", "passed"]
+
+
+def test_ledger_writes_are_atomic(tmp_path, monkeypatch):
+    """The ledger is written to a temporary file beside it and moved into place, so a file held open
+    elsewhere (Excel on Windows) leaves the ledger as it was, with no temporary file behind."""
+    led = tmp_path / "l.csv"
+    record_attempt(led, _row("k1", eval_id="eval-a"))
+    before = led.read_text(encoding="utf-8")
+
+    def locked(src, dst):
+        raise PermissionError(13, "The process cannot access the file", str(dst))
+    monkeypatch.setattr(ledger_module.os, "replace", locked)
+    with pytest.raises(PermissionError):
+        record_attempt(led, _row("k2", eval_id="eval-b"))
+    with pytest.raises(PermissionError):
+        finish_attempt(led, "eval-a", "passed")
+    assert led.read_text(encoding="utf-8") == before and [p.name for p in tmp_path.iterdir()] == ["l.csv"]
+
+
+def test_check_attempt_compares_hashes_ignoring_case_and_spaces(tmp_path):
+    """PowerShell's Get-FileHash prints upper case; a hand-copied hash must still count."""
+    led = tmp_path / "l.csv"
+    for n in range(MAX_TEST_ATTEMPTS):
+        record_attempt(led, _row(f"k{n}", gguf=" ABCDEF ", eval_id=f"eval-{n}"))
+    with pytest.raises(RetestLimit):
+        check_attempt(led, 1, "abcdef", "k-new")
+
+
+def test_a_failed_hybrid_reference_row_does_not_mark_the_attempt_error(bench, monkeypatch):
+    """Only the candidate's own (local) rows decide "error"; hybrid is Gemini's reference row."""
+    bench.state["rows"] = [{"outcome": "ok", "gate": "pass", "mode": "local"},
+                           {"outcome": "no_report", "gate": "fail", "mode": "hybrid"}]
+    bench("--candidate", "gemma-e4b", "--split", "test", "--mode", "hybrid")
+    assert [r["status"] for r in read_ledger(bench.ledger)] == ["started"]
+    other = bench.gemma.with_name("gemma2.gguf")   # another candidate, so the retest cap allows it
+    other.write_bytes(b"GGUF gemma two")
+    monkeypatch.setenv("GEMMA_GGUF", str(other))
+    bench.state["head"]["results/bench_ledger.csv"] = bench.ledger.read_text(encoding="utf-8")
+    bench.state["rows"] = [{"outcome": "no_report", "mode": "local"}, {"outcome": "ok", "mode": "hybrid"}]
+    bench("--candidate", "gemma-e4b", "--split", "test", "--mode", "hybrid")
+    assert [r["status"] for r in read_ledger(bench.ledger)] == ["started", "error"]
+
+
+def _locked(monkeypatch):
+    def locked(src, dst):
+        raise PermissionError(13, "The process cannot access the file", str(dst))
+    monkeypatch.setattr(ledger_module.os, "replace", locked)
+
+
+def test_eval_says_how_to_recover_when_the_ledger_is_locked_at_the_start(bench, monkeypatch, capsys):
+    _locked(monkeypatch)
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 1
+    out = capsys.readouterr().out
+    assert "Close results/bench_ledger.csv (e.g. in Excel) and run:" in out
+    assert "python -m assistant --config" in out and "eval --bench" in out and "--split test" in out
+    assert not bench.calls and bench.ledger.read_text(encoding="utf-8") == bench.header
+
+
+def test_eval_marks_error_or_says_how_when_the_ledger_is_locked(bench, monkeypatch, capsys):
+    bench.state["rows"] = [{"outcome": "no_report", "mode": "local"}]
+    real = ledger_module.os.replace
+    calls = []
+
+    def second_write_locked(src, dst):
+        calls.append(dst)
+        if len(calls) > 1:
+            raise PermissionError(13, "locked", str(dst))
+        return real(src, dst)
+    monkeypatch.setattr(ledger_module.os, "replace", second_write_locked)
+    assert bench("--candidate", "gemma-e4b", "--split", "test") == 1
+    out = capsys.readouterr().out
+    assert "Close results/bench_ledger.csv (e.g. in Excel) and run:" in out and "'error'" in out
+    assert [r["status"] for r in read_ledger(bench.ledger)] == ["started"]
+
+
+def test_eval_never_masks_its_own_exception_with_a_ledger_error(bench, monkeypatch, capsys):
+    bench.state["rows"] = RuntimeError("model server died")
+    real = ledger_module.os.replace
+    calls = []
+
+    def second_write_locked(src, dst):
+        calls.append(dst)
+        if len(calls) > 1:
+            raise PermissionError(13, "locked", str(dst))
+        return real(src, dst)
+    monkeypatch.setattr(ledger_module.os, "replace", second_write_locked)
+    with pytest.raises(RuntimeError, match="model server died"):
+        bench("--candidate", "gemma-e4b", "--split", "test")
+    assert "Close results/bench_ledger.csv (e.g. in Excel) and run:" in capsys.readouterr().out
