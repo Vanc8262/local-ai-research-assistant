@@ -46,6 +46,23 @@ class Case:
     oracle: list | None = None  # scripted steps when the default oracle is not enough
 
 
+def near(number: str, after: str, before: str = "") -> str:
+    """A final-answer regex for `number` with its unit beside it, so a bare number anywhere in
+    the answer no longer passes (eval review, 2026-11-14): "21 °C", "$142.50", "20%"."""
+    options = [rf"(?<![\d.]){number}(?![\d])\s?(?:{after})"]
+    if before:
+        options.append(rf"(?:{before})\s?{number}(?![\d])")
+    return "(?:" + "|".join(options) + ")"
+
+
+C = r"°|º|degrees?|deg\b|c\b|celsius"
+F = r"°|º|degrees?|deg\b|f\b|fahrenheit"
+USD = dict(after=r"usd\b|dollars?|\$", before=r"\$|usd|us\$")
+EUR = dict(after=r"eur\b|euros?|€", before=r"€|eur")
+GBP = dict(after=r"gbp\b|pounds?|£", before=r"£|gbp")
+PCT = r"%|percent|per cent"
+
+
 CELSIUS = {"unit": default_ok("celsius")}
 
 
@@ -58,12 +75,12 @@ def event(title: str, date: str, start: str, minutes: int, key: str) -> Expect:
 CASES: list[Case] = [
     # -- one call, right tool and arguments ------------------------------------
     Case("single-01", "single", "What's the temperature in Tokyo right now, in celsius?",
-         [Expect("get_weather", {"city": "Tokyo"}, CELSIUS)], [r"\b21\b"], "It is 21 °C in Tokyo."),
+         [Expect("get_weather", {"city": "Tokyo"}, CELSIUS)], [near("21", C)], "It is 21 °C in Tokyo."),
     Case("single-02", "single", "What is ACME trading at?",
-         [Expect("get_stock_price", {"ticker": "ACME"})], [r"142\.50?\b"], "ACME is at $142.50."),
+         [Expect("get_stock_price", {"ticker": "ACME"})], [near(r"142\.50?", **USD)], "ACME is at $142.50."),
     Case("single-03", "single", "Convert 200 EUR to USD.",
          [Expect("convert_currency", {"amount": 200, "from_currency": "EUR", "to_currency": "USD"})],
-         [r"\b250\b"], "200 EUR is 250 USD."),
+         [near("250", **USD)], "200 EUR is 250 USD."),
     Case("single-04", "single", "What is 37 * 48 + 19? Use the calculator tool.",
          [Expect("calculator", {"expression": "37 * 48 + 19"}, {"expression": anything})],
          [r"\b1795\b"], "The result is 1795."),
@@ -78,12 +95,12 @@ CASES: list[Case] = [
          exact={"create_event": 1}),
     Case("single-08", "single", "How warm is it in Denver in fahrenheit?",
          [Expect("get_weather", {"city": "Denver", "unit": "fahrenheit"})],
-         [r"\b37(\.4)?\b"], "It is 37.4 °F in Denver."),
+         [near(r"37(?:\.4)?", F)], "It is 37.4 °F in Denver."),
     Case("single-09", "single", "How much is 5000 JPY in GBP?",
          [Expect("convert_currency", {"amount": 5000, "from_currency": "JPY", "to_currency": "GBP"})],
-         [r"\b33\.3"], "5000 JPY is 33.33 GBP."),
+         [near(r"33\.3\d*", **GBP)], "5000 JPY is 33.33 GBP."),
     Case("single-10", "single", "Get me the latest GLOBX quote.",
-         [Expect("get_stock_price", {"ticker": "GLOBX"})], [r"88\.20?\b"], "GLOBX is at $88.20."),
+         [Expect("get_stock_price", {"ticker": "GLOBX"})], [near(r"88\.20?", **USD)], "GLOBX is at $88.20."),
 
     # -- no tool is needed; calling one is the failure --------------------------
     Case("notool-01", "no_tool", "What is the capital of France? Answer in one word.",
@@ -103,10 +120,10 @@ CASES: list[Case] = [
          exact={"create_event": 1}),
     Case("args-02", "arguments", "whats it like in lagos?? use Fahrenheit pls",
          [Expect("get_weather", {"city": "Lagos", "unit": "fahrenheit"})],
-         [r"\b8[78]\b"], "It is 87.8 °F in Lagos."),
+         [near(r"8(?:7\.8|8|7)", F)], "It is 87.8 °F in Lagos."),
     Case("args-03", "arguments", "Convert twelve hundred and fifty dollars to euros.",
          [Expect("convert_currency", {"amount": 1250, "from_currency": "USD", "to_currency": "EUR"})],
-         [r"\b1000\b"], "That is 1000 EUR."),
+         [near("1000", **EUR)], "That is 1000 EUR."),
     Case("args-04", "arguments",
          "Add two events: 'Gym' on 2026-11-10 at 07:00 for 60 minutes, and 'Lunch with Sam' "
          "the same day at half past twelve for 45 minutes.",
@@ -118,25 +135,25 @@ CASES: list[Case] = [
     Case("chain-01", "chain", "Read config/settings.json and tell me the temperature in my home city.",
          [Expect("read_file", {"path": "config/settings.json"}),
           Expect("get_weather", {"city": "Oslo"}, CELSIUS)],
-         [r"(-|−|minus )\s?2\b"], "It is -2 °C in Oslo."),
+         [near(r"(?:-|−|minus )\s?2", C)], "It is -2 °C in Oslo."),
     Case("chain-02", "chain",
          "What is the combined price of the stocks on the watchlist in config/settings.json?",
          [Expect("read_file", {"path": "config/settings.json"}),
           Expect("get_stock_price", {"ticker": "ACME"}),
           Expect("get_stock_price", {"ticker": "INITECH"})],
-         [r"155\.25"], "Together they cost $155.25."),
+         [near(r"155\.25", **USD)], "Together they cost $155.25."),
     Case("chain-03", "chain",
          "According to reports/q3.txt, by what percent did revenue grow from Q2 to Q3? "
          "Use the calculator for the arithmetic.",
          [Expect("read_file", {"path": "reports/q3.txt"}),
           Expect("calculator", {"expression": "(4200 - 3500) / 3500 * 100"}, {"expression": anything})],
-         [r"\b20(\.0+)?\b"], "Revenue grew 20%."),
+         [near(r"20(?:\.0+)?", PCT)], "Revenue grew 20%."),
     Case("chain-04", "chain",
          "Read data/trip.txt, then tell me the trip budget in USD and the temperature at the destination.",
          [Expect("read_file", {"path": "data/trip.txt"}),
           Expect("convert_currency", {"amount": 300000, "from_currency": "JPY", "to_currency": "USD"}),
           Expect("get_weather", {"city": "Tokyo"}, CELSIUS)],
-         [r"\b3000\b", r"\b21\b"], "The budget is 3000 USD and it is 21 °C in Tokyo."),
+         [near("3000", **USD), near("21", C)], "The budget is 3000 USD and it is 21 °C in Tokyo."),
     Case("chain-05", "chain",
          "Find the file in the notes directory and create a calendar event for each dated item in it. "
          "Skip items without a date.",
@@ -152,22 +169,22 @@ CASES: list[Case] = [
          "Compare the temperature in Paris and Lagos in celsius. What is the difference in degrees?",
          [Expect("get_weather", {"city": "Paris"}, CELSIUS),
           Expect("get_weather", {"city": "Lagos"}, CELSIUS)],
-         [r"\b17\b"], "Lagos is 17 degrees warmer."),
+         [near("17", C)], "Lagos is 17 degrees warmer."),
     Case("chain-08", "chain",
          "Read config/settings.json. Then convert the price of the first watchlist stock "
          "into the configured currency.",
          [Expect("read_file", {"path": "config/settings.json"}),
           Expect("get_stock_price", {"ticker": "ACME"}),
           Expect("convert_currency", {"amount": 142.5, "from_currency": "USD", "to_currency": "EUR"})],
-         [r"\b114(\.0+)?\b"], "ACME costs 114 EUR."),
+         [near(r"114(?:\.0+)?", **EUR)], "ACME costs 114 EUR."),
 
     # -- recovery: the first attempt fails and the model has to adapt -----------
     Case("recover-01", "recovery", "Open reports/q3_summary.txt and tell me the Q3 revenue.",
          [Expect("read_file", {"path": "reports/q3.txt"})], [r"\b4200\b"], "Q3 revenue was 4200 units."),
     Case("recover-02", "recovery", "What's the price of ticker INITEC? I may have misspelled it.",
-         [Expect("get_stock_price", {"ticker": "INITECH"})], [r"12\.75"], "INITECH is at $12.75."),
+         [Expect("get_stock_price", {"ticker": "INITECH"})], [near(r"12\.75", **USD)], "INITECH is at $12.75."),
     Case("recover-03", "recovery", "What's the temperature in Paris in celsius?",
-         [Expect("get_weather", {"city": "Paris"}, CELSIUS)], [r"\b14\b"], "It is 14 °C in Paris.",
+         [Expect("get_weather", {"city": "Paris"}, CELSIUS)], [near("14", C)], "It is 14 °C in Paris.",
          fail_first="get_weather",
          oracle=[[("get_weather", {"city": "Paris"})], [("get_weather", {"city": "Paris"})],
                  "It is 14 °C in Paris."]),

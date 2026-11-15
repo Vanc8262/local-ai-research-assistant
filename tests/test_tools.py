@@ -157,3 +157,18 @@ def test_check_case_needs_distinct_calls_for_each_expectation():
     case = by_id("chain-07")
     paris = {"name": "get_weather", "args": {"city": "Paris"}, "valid": True, "ok": True, "result": {}}
     assert not check_case(case, [paris, paris], "17")[0]
+
+
+def test_final_answers_need_the_number_with_its_unit():
+    """Eval review 2026-11-14: a bare number anywhere in the answer no longer passes."""
+    import re as re_module
+    from bench.suites.tool_calling import normalize_answer
+    from bench.suites.tool_cases import CASES
+    cases = {case.id: case for case in CASES}
+
+    def passes(case_id, answer):
+        return all(re_module.search(p, normalize_answer(answer), re_module.IGNORECASE) for p in cases[case_id].final)
+    assert passes("single-01", "It's 21°C in Tokyo.") and not passes("single-01", "I checked 21 stations; it is 70 °F.")
+    assert passes("chain-03", "Revenue grew 20 percent.") and not passes("chain-03", "From 2020 to 2021 revenue grew 25%.")
+    assert passes("chain-04", "The budget is $3,000 and Tokyo is 21 °C.")
+    assert passes("single-09", "5000 JPY is £33.33.") and not passes("single-02", "142.50 shares")
