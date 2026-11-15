@@ -215,6 +215,35 @@ Some steps need a decision, not text: which command a request needs, which tier 
 
 Decisions run on local tiers only and are logged as `decide` steps. If the server returns no token probabilities, the decider falls back to the letter the model writes at temperature 0, which gives a decision but no probability. The probabilities are not calibrated; thresholds come from the check's "confidence when right / when wrong" lines. The cases follow the use cases ranked on 2026-11-08: request routing, model routing, eval grading, bulk labelling, agent control and map-reduce features first, guardrails second.
 
+## Research bench
+
+The research bench compares candidate models on one frozen, versioned spec, [`evals/bench_v1.toml`](evals/bench_v1.toml): the questions (a dev split and a test split), the pinned referee model, the candidates, the fit limits and the pass line. The spec holds the rules below in its header. It is not frozen yet (`frozen = false`); the test questions are still to be written. Design: [docs/superpowers/specs/2026-11-15-research-bench-design.md](docs/superpowers/specs/2026-11-15-research-bench-design.md).
+
+```powershell
+.\.venv\Scripts\python.exe -m assistant eval --bench evals/bench_v1.toml --candidate gemma-e4b --split dev            # free to repeat
+.\.venv\Scripts\python.exe -m assistant eval --bench evals/bench_v1.toml --candidate gemma-e4b --split test --mode hybrid   # counts against the ledger
+.\.venv\Scripts\python.exe -m assistant referee runs/eval-<id> --bench evals/bench_v1.toml   # the pinned referee judges the saved reports
+.\.venv\Scripts\python.exe -m assistant referee calibrate sample runs/eval-<id>   # then spot, agree, run
+.\.venv\Scripts\python.exe -m assistant scorecard runs/eval-<A> runs/eval-<B> --bench evals/bench_v1.toml
+```
+
+**Referee.** A local model pinned by SHA-256, run at temperature 0 with seed 20261115 and thinking on. It reads only the stored sources (`sources.json`, `pages/`), never fetches or searches, and every call is private. It is only trusted once it matches hand labels: supported recall at least 0.90 and not_supported recall at least 0.85. `referee calibrate` samples claim and source pairs from dev evals to label (`sample`), blanks the labels for Van's spot check (`spot`), compares Claude's labels with Van's (`agree`) and scores the referee against the labels (`run`).
+
+**Test attempts are limited.** `results/bench_ledger.csv` records every test-split attempt. It allows at most 3 per bench version and candidate GGUF file (SHA-256), and an identical candidate key (GGUF hash, pipeline commit, tier settings) never runs twice. The ledger row must be committed before scoring, so a miss cannot be quietly rerun.
+
+**Scorecard.** Each candidate gets a fit check, refereed quality and a rank. Fit limits: fully on GPU at 32K context, free RAM never below 2048 MB, at most 60 minutes per report, and at most 10% of runs ending without a report. The pass line on the test split is facts right at least 0.75 and errors through at most 0.05, plus fit. Candidates are ranked by Copeland count (pairwise wins). Two candidates count as tied when a paired bootstrap over their shared questions does not separate them, and with fewer than 10 shared questions they are tied. Speed breaks ties. Output goes to `results/bench_v<version>_scorecard.md` and `.csv`.
+
+**Rules that stop the loop** (spec section 6.8):
+
+1. Pipeline changes are free on dev, not on test. A test-split score is taken once per candidate per bench version, where a candidate is the GGUF hash plus the pipeline commit plus the tier settings. After a miss, at most 2 retests per bench version. The scorecard lists every test run, including misses, and the code refuses a third retest.
+2. Bench changes need proof and a new version. The referee, its prompt, the scoring or the test questions change only when hand-labelled examples show a real grading error (proposed: at least 5 labelled cases of the same error). The change creates bench v2, and v1 scores are not compared with v2.
+3. One round at a time. A comparison round runs on one frozen bench version from start to finish. Nothing changes mid-round.
+4. A broken task is fixed, not argued about. A test question that every candidate scores 0 on, or whose `expect` group is wrong, is logged and goes into the next version. It is not edited in place.
+
+A referee pass means the referee accepted the report, not that every sentence is true. Benchmarking a model never adds it to `vault.toml`; Van picks. The `bench` `code` suite is separate and runs model-written code without a sandbox, so it is not part of this.
+
+`tests/test_bench_questions.py` checks the question files: unique ids, dev and test disjoint, at least 25 public non-codex test questions, no answer words in a question's text, and at least 3 `expect` groups each.
+
 ## Model vault
 
 The vault keeps permanent local copies of the open-weight models chosen to keep, so they never depend on a hosted service. It lives outside the repo at `vault_dir` (`D:/model-vault`, the 2 TB disk), in the same `<publisher>/<repo>` layout as `D:\models`, with `manifest.json` recording each model's source, exact commit, license, the reason it was picked, and every file's size and SHA-256. Research notes: [Owning open model weights locally](https://claude.ai/artifact/4rQnYU23cB5b3ZVQFGCY8P).

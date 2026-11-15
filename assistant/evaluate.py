@@ -26,6 +26,10 @@ The support check is the local model's verdict plus a second opinion from the de
 (assistant/decide.py): a "supported" it doubts drops to "partial". Free RAM is sampled
 every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md, and
 manifest.json records what the eval ran with (assistant/manifest.py).
+
+With `--bench`, the eval runs one candidate on one split of the frozen research bench
+(evals/bench_v1.toml) and is judged by the pinned referee and `scorecard` instead of this
+gate; see "Research bench" in the README.
 """
 from __future__ import annotations
 
