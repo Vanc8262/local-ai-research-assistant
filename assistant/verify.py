@@ -44,9 +44,11 @@ SNIPPET_JOIN = "\n[search snippet] "
 
 VERDICTS = ("supported", "partial", "unsupported", "unchecked")
 DOUBTED = "the decider doubts it"
-# shortcut: from 36 labelled decide cases (Gemma's confidence 0.93 when right, 0.33 when wrong);
-# re-check against hand-labelled claims once the eval has some.
-MIN_DECIDER_P = 0.8   # from 88 hand-labelled claims: results/decider_threshold_2026-11-12.md
+# The decider overrules a pass below this p(true). Set from 88 hand-labelled claims
+# (results/decider_threshold_2026-11-12.md); kept when the decider moved from passages to the
+# checker's quote, where 0.8 caught 19 of 40 weak claims for 14 of 86 good ones and 0.5 caught
+# 13 for 10 (results/decider_probe_2026-11-15/README.md).
+MIN_DECIDER_P = 0.8
 NO_SOURCE = "no source has this number"
 
 TABLE_RULE = """If the support is a value in a table, the quote is two lines copied exactly, joined by
@@ -393,14 +395,29 @@ def check_citation(claim: Claim, index: str, sources: dict, client, run_dir: Pat
 
 
 def _second_opinion(check: Check, claim: Claim, passages: list[str], decider) -> Check:
-    """Ask the decider whether the passages support the claim, and drop a "supported" it
-    doubts to "partial". A decider that cannot answer leaves the verdict as it was and is
-    counted in the summary, so a broken decider shows instead of passing everything."""
+    """Ask the decider whether the sentence the checker quoted supports the claim, and drop a
+    "supported" it doubts to "partial". The quote has already been found in the source, so
+    the open question is only whether it says what the claim says.
+
+    Until 2026-11-15 the decider was shown the three passages instead, and asked to find the
+    support itself in about 3,400 characters with a one-letter answer. On 126 hand-labelled
+    checks it overruled 51 fully supported claims to catch 35 partly or unsupported ones;
+    shown the quote, the same model overruled 14 and caught 19
+    (results/decider_probe_2026-11-15/README.md). Passages are still used when the checker
+    gave no quote.
+
+    A decider that cannot answer leaves the verdict as it was and is counted in the summary,
+    so a broken decider shows instead of passing everything."""
     if decider is None or check.verdict != "supported":
         return check
     from .decide import noul   # decide imports verify's neighbours; keep the import here
-    state = "Passages from the cited source:\n" + "\n---\n".join(passages)
-    decision = decider.ask(state, noul(f"The passages support this claim: {claim.text}"), purpose="verify")
+    if check.quote.strip():
+        state = "Sentence from the cited source:\n" + check.quote
+        statement = f"The sentence supports this claim: {claim.text}"
+    else:
+        state = "Passages from the cited source:\n" + "\n---\n".join(passages)
+        statement = f"The passages support this claim: {claim.text}"
+    decision = decider.ask(state, noul(statement), purpose="verify")
     if decision.error:
         check.decider_error = decision.error[:200]
         return check

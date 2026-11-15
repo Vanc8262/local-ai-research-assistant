@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 33,
+    "uncited": 0,
+    "supported": 32,
+    "partial": 1,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.97,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 33,
+    "uncited": 0,
+    "supported": 33,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "rewritten",
+      "before": "Common values for 'k' are top-1 (e.g., Switch Transformer) or top-2 (e.g., GShard, Mixtral) .",
+      "after": "Common values for 'k' are top-1 (e.g., Switch Transformer) or top-2 (e.g., GShard) [10][12]",
+      "reason": "The source supports top-1 for Switch Transformer and top-2 for GShard, but does not mention Mixtral.; The passages mention Switch Transformer uses exactly one expert, but they do not mention GShard, Mixtral, or state that top-2 is a common value for k.; The claim mentions Mixtral as an example for top-2, but this specific model is not mentioned in the provided passages."
+    }
+  ]
+}

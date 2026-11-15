@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 49,
+    "uncited": 1,
+    "supported": 48,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.98,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 13,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 49,
+    "uncited": 0,
+    "supported": 49,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 13,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "cited",
+      "before": "Supervised Fine-Tuning (SFT) of the base language model.",
+      "after": "Supervised Fine-Tuning (SFT) of the base language model [4].",
+      "reason": "The source explicitly states that the RLHF approach begins with SFT to help the base language model generate reasonable responses."
+    }
+  ]
+}

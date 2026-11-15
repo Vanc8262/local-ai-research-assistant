@@ -1,0 +1,54 @@
+{
+  "before": {
+    "claims": 36,
+    "uncited": 0,
+    "supported": 32,
+    "partial": 4,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.889,
+    "dangling_citations": 0,
+    "doubted": 11,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 34,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "(It is worth noting that one source states the sum equals `E[f(x)] - f(x)`, which would be the negative of the difference, but the overwhelming consensus from other sources aligns with the sum being `prediction - baseline`).",
+      "after": "",
+      "reason": "the decider doubts it (p 0.23, confidence 0.21); The source explicitly states that the sum of all SHAP values equals E[f(x)] - f(x).; The source states that the SHAP values sum to the difference between the prediction and the baseline, not E[f(x)] - f(x).; The provided passages do not mention the specific mathematical formulas E[f(x)] - f(x) or prediction - baseline.; The source mentions that the prediction starts from the baseline but does not mention the specific formula E[f(x)] - f(x) or its relationship to the difference.; The source describes the sum equaling the model's output and defines SHAP values as the difference between the current prediction and the base value, but it does not state the claim as written.; The source confirms the sum relates to the difference between expected and actual output but does not use the specific mathematical notation mentioned in the claim.; the decider doubts it (p 0.60, confidence 0.03); The source confirms that SHAP values describe the difference between the individual prediction and the average model prediction.; The source states the sum equals the difference between the prediction and the average prediction, not the negative of the difference.; The source states that SHAP values sum up to the difference between baseline and current model output, which is $f(x) - E[f(X)]$, not $E[f(x)] - f(x)$.; the decider doubts it (p 0.31, confidence 0.11); Source [17] provides the specific formula E[f(x)] - f(x), while other sources like [13] and [1] confirm the consensus that the sum equals the difference between prediction and baseline."
+    },
+    {
+      "action": "rewritten",
+      "before": "Global Interpretability: SHAP primarily provides *local interpretability*, explaining individual predictions .",
+      "after": "SHAP provides local interpretability, explaining individual predictions [3][6][12].",
+      "reason": "the decider doubts it (p 0.28, confidence 0.15); The source explicitly states that SHAP is a method for local interpretability and explains individual predictions.; The source confirms SHAP provides local interpretability but also details how SHAP is used for global interpretability.; The source confirms SHAP explains individual predictions but also states it can summarize feature importance across an entire model (global explainability).; the decider doubts it (p 0.51, confidence 0.00); Multiple sources confirm that SHAP is used for local interpretability and explains individual predictions."
+    },
+    {
+      "action": "removed",
+      "before": "This contrasts with methods like SAGE, which focus on overall model dependence on features .",
+      "after": "",
+      "reason": "the decider doubts it (p 0.50, confidence 0.00); The source explicitly states that SAGE is designed to answer how much the model depends on each feature overall."
+    },
+    {
+      "action": "cited",
+      "before": "Visualizations such as waterfall plots (e.g., Figure 4 mentioned in ) and beeswarm plots are commonly used to represent SHAP values, illustrating the contribution of each feature to push the prediction from the baseline to the final output .",
+      "after": "Visualizations such as waterfall plots (e.g., Figure 4 mentioned in) and beeswarm plots are commonly used to represent SHAP values, illustrating the contribution of each feature to push the prediction from the baseline to the final output [16].",
+      "reason": "The source explicitly mentions both beeswarm and waterfall plots as common visualizations for SHAP values and describes how the waterfall plot shows feature contribution relative to the average prediction."
+    }
+  ]
+}

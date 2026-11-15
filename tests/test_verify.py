@@ -305,8 +305,22 @@ def test_the_decider_drops_a_pass_it_doubts_to_partial(tmp_path):
     assert result.claims[0].verdict == "partial"
     assert result.claims[0].checks[0].reason.startswith("the decider doubts it (p 0.30")
     assert result.summary()["doubted"] >= 1
-    assert "The passages support this claim: Python 3.15 adds lazy imports" in decider.asked[0][1]
-    assert "lazy keyword defers loading" in decider.asked[0][0]
+    # The decider judges the sentence the checker quoted, not the passages around it.
+    state, statement = decider.asked[0]
+    assert "The sentence supports this claim: Python 3.15 adds lazy imports" in statement
+    assert state.startswith("Sentence from the cited source:\n") and "lazy keyword defers loading" in state
+    assert "---" not in state
+
+
+def test_without_a_quote_the_decider_reads_the_passages():
+    from assistant.verify import Check, Claim, _second_opinion
+    decider = FakeDecider(p_true=0.9)
+    check = _second_opinion(Check(index="1", verdict="supported"), Claim(text="X is Y.", citations=["1"]),
+                            ["first passage", "second passage"], decider)
+    state, statement = decider.asked[0]
+    assert check.verdict == "supported" and check.decider_p == 0.9
+    assert state == "Passages from the cited source:\nfirst passage\n---\nsecond passage"
+    assert statement == "The passages support this claim: X is Y."
 
 
 def test_a_confident_decider_keeps_the_pass(tmp_path):

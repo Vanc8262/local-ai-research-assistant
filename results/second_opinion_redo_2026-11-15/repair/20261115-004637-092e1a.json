@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 45,
+    "uncited": 1,
+    "supported": 44,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.978,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 12,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 44,
+    "uncited": 0,
+    "supported": 44,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 12,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "While comprehensive for common data operations, there might be niche functionalities present only in the eager mode.",
+      "after": "",
+      "reason": "no likely source supports it"
+    }
+  ]
+}

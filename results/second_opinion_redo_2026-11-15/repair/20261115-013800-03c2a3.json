@@ -1,0 +1,48 @@
+{
+  "before": {
+    "claims": 37,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 3,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.919,
+    "dangling_citations": 0,
+    "doubted": 8,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 35,
+    "uncited": 0,
+    "supported": 35,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 6,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "rewritten",
+      "before": "For example, if there are 2 replicas running at 80% CPU utilization, and the target is 50%, the HPA calculates `ceil(2 * (80/50))` which equals `ceil(3.2)`, resulting in 4 desired replicas .",
+      "after": "For example, if there are 2 replicas running at 80% CPU utilization, and the target is 50%, the HPA calculates `ceil(2 * (80/50))` resulting in 4 desired replicas [3].",
+      "reason": "source does not mention 3.2; The source provides the exact example and calculation used to determine the desired replica count."
+    },
+    {
+      "action": "removed",
+      "before": "Another example: 8 pods averaging 70% usage with a 60% target yields `ceil(8 * (70/60)) = ceil(9.33) = 10` desired replicas .",
+      "after": "",
+      "reason": "source does not mention 70%; The passage provides an example matching the exact parameters and calculation shown in the claim."
+    },
+    {
+      "action": "removed",
+      "before": "Calculation: It applies the scaling formula for each configured metric .",
+      "after": "",
+      "reason": "The source states that the controller fetches the value of each configured metric and uses one core formula, but it does not explicitly state that the formula is applied for each configured metric.; the decider doubts it (p 0.64, confidence 0.06); The source explicitly states that the process involves calculating desired replicas for each metric.; the decider doubts it (p 0.05, confidence 0.70); The passage states that when using multiple metrics, each one is evaluated independently."
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "before": {
+    "claims": 44,
+    "uncited": 1,
+    "supported": 33,
+    "partial": 3,
+    "unsupported": 7,
+    "unchecked": 0,
+    "citation_coverage": 0.977,
+    "citation_accuracy": 0.767,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 35,
+    "uncited": 0,
+    "supported": 35,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "rewritten",
+      "before": "The BM25 scoring function for a single term $t$ in a document $d$ is given by :",
+      "after": "The BM25 scoring function for a single term t in document d is: [16]",
+      "reason": "the model's quote is not in the source: The source explicitly states the standard BM25 formula for a single term."
+    },
+    {
+      "action": "removed",
+      "before": "$BM25(t,d) = IDF(t) \\cdot \\frac{f(t,d) \\cdot (k1+1)}{f(t,d) + k1 \\cdot (1 - b + b \\cdot \\frac{|d|}{avgdl})}$",
+      "after": "",
+      "reason": "no likely source supports it"
+    },
+    {
+      "action": "removed",
+      "before": "The two critical parameters that control BM25's behavior are `k1` and `b` .",
+      "after": "",
+      "reason": "The source lists k1 and b as topics to be explained but does not state they are the two critical parameters controlling BM25's behavior.; The source mentions a third parameter, k3, which contradicts the claim that only k1 and b are the critical parameters.; The passages show that k1 and b are parameters used in the BM25 functions, but they do not state that they are the two critical parameters controlling its behavior."
+    },
+    {
+      "action": "removed",
+      "before": "If `k1` is set to 0, term frequency has no effect beyond whether the term is present or not.",
+      "after": "",
+      "reason": "The passages mention that k1 caps a term's contribution but do not state the specific effect of setting k1 to 0."
+    },
+    {
+      "action": "removed",
+      "before": "It's effectively a binary occurrence model, where the term's frequency in the document doesn't matter beyond 1 .",
+      "after": "",
+      "reason": "The source describes a saturation curve where term frequency levels off, but it does not state that the model is a binary occurrence model where frequency beyond 1 is irrelevant."
+    },
+    {
+      "action": "removed",
+      "before": "As `k1` increases, the model becomes more sensitive to higher term frequencies, allowing terms that appear many times to contribute more to the overall score .",
+      "after": "",
+      "reason": "The passages explain that BM25 caps term frequency contribution (saturation) but do not state that increasing k1 increases sensitivity to high term frequencies."
+    },
+    {
+      "action": "removed",
+      "before": "For very long documents, like books, where a term might appear many times without necessarily indicating high relevance to the work as a whole, a lower `k1` might be beneficial to prevent over-weighting these documents .",
+      "after": "",
+      "reason": "The source suggests that for long and diverse documents, k1 should trend toward larger numbers, not lower ones."
+    },
+    {
+      "action": "cited",
+      "before": "If `b` is set to 0, document length has no effect on the score .",
+      "after": "If `b` is set to 0, document length has no effect on the score [4].",
+      "reason": "The source explicitly states that setting b to 0 disables length normalization."
+    },
+    {
+      "action": "removed",
+      "before": "This means that longer documents are not penalized for their length, and all else being equal, a longer document with more term occurrences would likely score higher, irrespective of its density .",
+      "after": "",
+      "reason": "The source explicitly states that the formula applies a 'length handicap' to documents longer than average, contradicting the claim that they are not penalized."
+    },
+    {
+      "action": "removed",
+      "before": "Empirically validating the optimal values for `b` and `k1` can be a complex and research-intensive process .",
+      "after": "",
+      "reason": "The source asks how to empirically validate the parameters and what the most scientific way to evaluate them is, implying the process is not straightforward."
+    },
+    {
+      "action": "removed",
+      "before": "It's worth noting that while a `k3` parameter exists for handling repeated query terms, it is typically ignored by popular search engines like Lucene as repeated terms are rare in most search queries .",
+      "after": "",
+      "reason": "the model's quote is not in the source: The source confirms k3 handles repeated terms, Lucene ignores it, and this is because repeated terms are rare in traditional search queries."
+    }
+  ]
+}

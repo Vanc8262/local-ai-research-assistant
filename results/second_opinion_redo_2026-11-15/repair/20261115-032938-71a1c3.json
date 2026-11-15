@@ -1,0 +1,36 @@
+{
+  "before": {
+    "claims": 35,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 1,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.971,
+    "dangling_citations": 0,
+    "doubted": 6,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 34,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "Furthermore, applying metadata filters *before* reranking can help refine the candidate set even further .",
+      "after": "",
+      "reason": "the decider doubts it (p 0.01, confidence 0.93); The source explicitly states that metadata filters should be applied during initial retrieval, before reranking."
+    }
+  ]
+}

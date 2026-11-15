@@ -1,0 +1,42 @@
+{
+  "before": {
+    "claims": 27,
+    "uncited": 1,
+    "supported": 25,
+    "partial": 1,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 0.963,
+    "citation_accuracy": 0.962,
+    "dangling_citations": 0,
+    "doubted": 6,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 26,
+    "uncited": 0,
+    "supported": 26,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 5,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "removed",
+      "before": "Despite this shared goal, they differ significantly in their underlying mechanisms, optimization strategies, and practical implications.",
+      "after": "",
+      "reason": "no likely source supports it"
+    },
+    {
+      "action": "cited",
+      "before": "Calibration Data: GPTQ requires a calibration dataset, typically 128-256 samples, to compute the Hessian and minimize errors .",
+      "after": "**Calibration Data**: GPTQ requires a calibration dataset, typically 128-256 samples, to compute the Hessian and minimize errors [13].",
+      "reason": "The passage confirms GPTQ uses a calibration dataset to estimate Hessians, and the configuration snippet shows a sample size of 256."
+    }
+  ]
+}

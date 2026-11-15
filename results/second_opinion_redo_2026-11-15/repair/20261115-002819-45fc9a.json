@@ -1,0 +1,48 @@
+{
+  "before": {
+    "claims": 34,
+    "uncited": 0,
+    "supported": 31,
+    "partial": 3,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 0.912,
+    "dangling_citations": 0,
+    "doubted": 2,
+    "decider_errors": 0
+  },
+  "after": {
+    "claims": 34,
+    "uncited": 0,
+    "supported": 34,
+    "partial": 0,
+    "unsupported": 0,
+    "unchecked": 0,
+    "citation_coverage": 1.0,
+    "citation_accuracy": 1.0,
+    "dangling_citations": 0,
+    "doubted": 1,
+    "decider_errors": 0
+  },
+  "changes": [
+    {
+      "action": "rewritten",
+      "before": "For example, reading a CSV file can be dramatically faster, with one case showing PyArrow completing the work in 11.8 seconds compared to Python's 55.8 seconds , and another demonstrating a speedup of up to 20x .",
+      "after": "For example, reading a CSV file can be dramatically faster, with one case showing PyArrow completing the work in 11.8 seconds compared to Python's 55.8 seconds [11][19].",
+      "reason": "The source supports the specific time comparison but does not mention the 20x speedup.; The source mentions speed improvements but does not contain the specific figures (11.8 seconds vs 55.8 seconds) or the claim of a 20x speedup.; The sources confirm the specific time comparison but do not mention a speedup of up to 20x."
+    },
+    {
+      "action": "rewritten",
+      "before": "Native Nullability: Pandas 2.0 provides native support for nullable data types across all data types, addressing a limitation of NumPy .",
+      "after": "Pandas 2.0 provides native support for nullable data types [1][8][10].",
+      "reason": "the decider doubts it (p 0.04, confidence 0.74); The documentation explicitly states that missing data support (NA) is provided for all data types.; The passages confirm native support for nullable data types in Pandas 2.0 but do not state that this support is provided across all data types or explicitly address a limitation of NumPy.; The source confirms support for nullable types in integer, boolean, and string types but does not state that support is provided across all data types or mention NumPy limitations.; the decider doubts it (p 0.59, confidence 0.02); The sources confirm Pandas 2.0's native support for nullable data types, its application across all data types via PyArrow, and its departure from the NumPy default."
+    },
+    {
+      "action": "cited",
+      "before": "Cautious Use Recommended: The implementation is \"relatively new,\" and users are advised to \"use with caution until at least pandas 2.1 is released\" .",
+      "after": "**Cautious Use Recommended**: The implementation is \"relatively new,\" and users are advised to \"use with caution until at least pandas 2.1 is released\" [12].",
+      "reason": "The source explicitly states that the Pandas team recommended caution until Pandas 2.1+ for early adoption of dtype_backend='pyarrow'."
+    }
+  ]
+}
