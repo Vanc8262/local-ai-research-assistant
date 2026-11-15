@@ -375,3 +375,12 @@ def test_shipped_ledger_is_header_only():
     with (ROOT / "results" / "bench_ledger.csv").open(encoding="utf-8", newline="") as handle:
         rows = list(csv.reader(handle))
     assert rows == [list(LEDGER_FIELDS)]
+
+
+def test_bench_eval_probes_the_candidate_tier_for_gpu_offload(bench, monkeypatch):
+    seen = []
+    monkeypatch.setattr(cli, "fetch_llama_swap_log",
+                        lambda base_url: seen.append(base_url) or "load_tensors: offloaded 40/49 layers to GPU")
+    assert bench("--candidate", "gemma-e4b", "--split", "dev") == 0
+    probe = bench.calls[0]["offload_probe"]
+    assert probe() == (40, 49) and seen == ["http://127.0.0.1:1234/v1"]

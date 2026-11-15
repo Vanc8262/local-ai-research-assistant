@@ -24,6 +24,9 @@
                                                             judge an eval's reports with the pinned referee
     python -m assistant referee calibrate sample|spot|agree|run ...
                                                             the referee's calibration set: sample, spot-check, compare, score
+    python -m assistant scorecard runs/eval-<a> runs/eval-<b> --bench evals/bench_v1.toml [--out FILE]
+                                                            fit, refereed quality and rank of bench evals; on
+                                                            the test split, marks each attempt passed or missed
     python -m assistant claims sample runs/eval-<id> ...    sample checker verdicts to label by hand
     python -m assistant claims score results/claim_sample.csv   false-pass and false-removal rates from the labels
     python -m assistant decide probe [-t local]             which decision method works on a local tier
@@ -50,8 +53,9 @@ from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
-from . import calibration, claim_sample
+from . import calibration, claim_sample, scorecard
 from .evaluate import MODES, RUNS, load_questions, reload_model, rescore, run_eval
+from .fit import fetch_llama_swap_log, parse_offload
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
@@ -483,9 +487,11 @@ def _bench_eval(settings, args, plan: dict) -> int:
                                 "git_commit": plan["commit"], "split": "test", "eval_id": attempt,
                                 "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     try:
+        base_url = settings.tier(plan["tier"]).base_url
         out_dir, rows = run_eval(settings, plan["questions"], plan["modes"], verify_tier=args.verify_tier,
                                  reload=not args.no_reload, runs=spec.runs, candidate_tier=plan["tier"],
-                                 bench=bench, eval_id=eval_id, **_snapshot_options(args))
+                                 bench=bench, eval_id=eval_id, **_snapshot_options(args),
+                                 offload_probe=lambda: parse_offload(fetch_llama_swap_log(base_url)))
     except BaseException:   # a crash or Ctrl-C still used up the attempt
         if plan["test"]:
             finish_attempt(ledger, attempt, "error")
@@ -524,6 +530,38 @@ def cmd_referee(settings, args) -> int:
     if incomplete:
         print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some referee judgements failed.")
     return 0 if rows and not incomplete else 1
+
+
+def cmd_scorecard(settings, args) -> int:
+    """Fit, refereed quality and rank of bench evals (assistant/scorecard.py). Exit 1 when refused.
+    On the test split, every eval's attempt must already be in the committed ledger at HEAD; each is
+    then marked passed or missed in results/bench_ledger.csv, which is to be committed next."""
+    spec_path = Path(args.bench)
+    try:
+        spec = load_bench(spec_path)
+        cards, reference = scorecard.build_cards([Path(d) for d in args.eval_dirs], spec,
+                                                 committed_ledger=_git("show", f"HEAD:{DEFAULT_LEDGER}") or None,
+                                                 spec_sha256=sha256_file(spec_path))
+        ranked = scorecard.rank(cards, spec.pass_line)
+    except (scorecard.ScorecardRefused, BenchSpecError, OSError, ValueError) as exc:
+        print(f"Scorecard refused: {exc}")
+        return 1
+    calibration_file = Path("results") / f"calibration_v{spec.version}_{spec.referee.tier}.md"
+    calibration_md = calibration_file.read_text(encoding="utf-8") if calibration_file.is_file() else None
+    out = Path(args.out or f"results/bench_v{spec.version}_scorecard.md")
+    scorecard.write_scorecard(out, ranked, spec, calibration_md=calibration_md, reference=reference)
+    print(out.read_text(encoding="utf-8"))
+    print(f"Saved: {out} and {out.with_suffix('.csv')}")
+    if ranked and ranked[0].split == "test":
+        ledger = Path(REPO_ROOT) / DEFAULT_LEDGER
+        try:
+            for card in ranked:
+                finish_attempt(ledger, card.eval_id, "passed" if card.passes else "missed")
+        except (ValueError, OSError) as exc:   # the working ledger lost a row that HEAD has
+            print(f"Ledger not updated: {exc}. Restore it (git checkout HEAD -- {DEFAULT_LEDGER}) and run again.")
+            return 1
+        print(f"Marked {len(ranked)} test attempts passed or missed in {DEFAULT_LEDGER}; commit that file.")
+    return 0
 
 
 def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool, sha: str = "") -> None:
@@ -805,6 +843,10 @@ def main(argv: list[str] | None = None) -> int:
     snap = evaluate.add_mutually_exclusive_group()
     snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
     snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")
+    card = sub.add_parser("scorecard", help="fit, refereed quality and rank of research bench evals")
+    card.add_argument("eval_dirs", nargs="+", help="bench eval folders, e.g. runs/eval-20261115-...")
+    card.add_argument("--bench", default="evals/bench_v1.toml")
+    card.add_argument("--out", default=None, help="default: results/bench_v<version>_scorecard.md (and .csv)")
     claims = sub.add_parser("claims", help="sample the checker's verdicts for labelling, or score the labels")
     claims.add_argument("action", choices=["sample", "score"])
     claims.add_argument("paths", nargs="*", help="sample: eval folders; score: the labelled CSV")
@@ -833,7 +875,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "rescore": cmd_rescore, "referee": cmd_referee, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "rescore": cmd_rescore, "referee": cmd_referee, "scorecard": cmd_scorecard, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 
