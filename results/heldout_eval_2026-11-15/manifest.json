@@ -1,0 +1,135 @@
+{
+  "started": "2026-11-15T00:56:49+00:00",
+  "git_sha": "c99570c9d607b37a7cdd86b23fde732ea6f9704e",
+  "git_dirty": false,
+  "python": "3.13.15",
+  "platform": "Windows-10-10.0.19045-SP0",
+  "model_server": "llama-swap",
+  "default_tier": "local",
+  "tiers": {
+    "local": {
+      "name": "local",
+      "kind": "local",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "gemma-4-e4b-qat",
+      "label": "Gemma 4 E4B QAT (local)",
+      "api_key_env": "",
+      "temperature": 1.0,
+      "max_tokens": 6000,
+      "lms_key": "gemma-4-e4b-it-qat",
+      "extra_body": {
+        "top_p": 0.95,
+        "top_k": 64
+      }
+    },
+    "local-backup": {
+      "name": "local-backup",
+      "kind": "local",
+      "base_url": "http://127.0.0.1:1234/v1",
+      "model": "qwen3.5-9b",
+      "label": "Qwen3.5 9B Q4_K_M (local)",
+      "api_key_env": "",
+      "temperature": 0.6,
+      "max_tokens": 6000,
+      "lms_key": "qwen/qwen3.5-9b",
+      "extra_body": {
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0
+      }
+    },
+    "gemini": {
+      "name": "gemini",
+      "kind": "cloud",
+      "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "model": "gemini-2.5-flash",
+      "label": "Gemini 2.5 Flash (free tier)",
+      "api_key_env": "GEMINI_API_KEY",
+      "temperature": 1.0,
+      "max_tokens": 6000,
+      "lms_key": "",
+      "extra_body": {}
+    }
+  },
+  "research": {
+    "ldr_python": "C:\\Users\\vanc8\\.venvs\\ldr\\Scripts\\python.exe",
+    "context_window": 32768,
+    "iterations": 3,
+    "timeout_s": 3600,
+    "embed_model": "text-embedding-nomic-embed-text-v1.5",
+    "embed_url": "",
+    "codex_k": 8,
+    "codex_min_sources": 10,
+    "tavily_fallback": true,
+    "web_min_sources": 8,
+    "web_pages": 6,
+    "writer_temperature": 0.3
+  },
+  "search": {
+    "router": true,
+    "kiwix_url": "http://127.0.0.1:8090",
+    "kiwix_books": [
+      "wikipedia_en_all_nopic",
+      "devdocs_en_python",
+      "devdocs_en_pandas",
+      "devdocs_en_numpy",
+      "devdocs_en_scikit-learn",
+      "devdocs_en_pytorch",
+      "devdocs_en_docker",
+      "devdocs_en_kubernetes",
+      "devdocs_en_terraform",
+      "devdocs_en_git",
+      "devdocs_en_postgresql",
+      "devdocs_en_fastapi",
+      "ai.stackexchange.com_en_all",
+      "datascience.stackexchange.com_en_all",
+      "stats.stackexchange.com_en_all",
+      "stackoverflow.com_en_all"
+    ],
+    "live": [
+      "arxiv",
+      "openalex",
+      "hf_papers",
+      "github",
+      "stackexchange",
+      "hackernews"
+    ],
+    "searxng_bonus": true,
+    "cache_days": 7,
+    "per_source": 2
+  },
+  "search_cache_version": 3,
+  "modes": [
+    "local",
+    "hybrid"
+  ],
+  "runs": 1,
+  "questions": [
+    "bm25",
+    "hnsw",
+    "flash-attention",
+    "rope",
+    "kv-cache",
+    "speculative-decoding",
+    "moe-routing",
+    "dpo",
+    "react-pattern",
+    "free-threaded-python",
+    "pandas-arrow",
+    "polars-lazy",
+    "cap-theorem",
+    "k8s-hpa",
+    "terraform-state",
+    "shap",
+    "k-fold-cv",
+    "hyde",
+    "cross-encoder-rerank",
+    "gptq-awq"
+  ],
+  "gguf": {},
+  "questions_file": {
+    "path": "evals/heldout_questions.toml",
+    "sha256": "11ce009840f0a103a1a9cec539989f4d6a5f12a290029b340b018ede722592f7"
+  }
+}
