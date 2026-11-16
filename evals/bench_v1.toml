@@ -1,0 +1,57 @@
+# Research bench v1: frozen, versioned spec. Rules that stop the loop (spec section 6.8):
+#
+# 1. Pipeline changes are free on dev, not on test. Anyone can change the pipeline (checker,
+#    decider, writer prompts) and measure it on the dev split. A test-split score is taken once
+#    per candidate per bench version, where a candidate is the GGUF hash plus the pipeline commit
+#    plus the tier settings. After a miss, at most 2 retests per bench version. The scorecard
+#    lists every test run, including misses, and the code refuses a third retest.
+# 2. Bench changes need proof and a new version. The referee, its prompt, the scoring or the test
+#    questions change only when hand-labelled examples show a real grading error (proposed: at
+#    least 5 labelled cases of the same error). The change creates bench v2, and v1 scores are not
+#    compared with v2.
+# 3. One round at a time. A comparison round (several candidates) runs on one frozen bench version
+#    from start to finish. Nothing changes mid-round.
+# 4. A broken task is fixed, not argued about. A test question that every candidate scores 0 on,
+#    or whose `expect` group is wrong, is logged and goes into the next version. It isn't edited
+#    in place.
+#
+# A referee pass means the referee accepted the report, not that every sentence is true.
+
+version = 1
+frozen = false
+frozen_on = ""
+runs = 1
+search = "searxng"
+tavily_fallback = false
+
+[questions]
+dev = ["evals/research_questions.toml", "evals/heldout_questions.toml"]
+test = ["evals/bench_test_questions.toml"]
+
+[referee]
+tier = "referee"
+gguf_env = "REFEREE_GGUF"
+sha256 = ""
+prompt_version = 1
+prompt_hash = ""          # assistant.referee.PROMPT_HASH; required once frozen = true
+max_referee_failed = 0.02 # a card is refused when the referee could not judge more of its statements
+min_supported_recall = 0.90
+min_not_supported_recall = 0.85
+
+[candidates.gemma-e4b]
+tier = "local"
+gguf_env = "GEMMA_GGUF"
+
+[candidates.qwen-9b]
+tier = "local-backup"
+gguf_env = "QWEN_GGUF"
+
+[fit]
+min_free_ram_mb = 2048
+max_report_minutes = 60
+max_error_share = 0.10
+context = 32768
+
+[pass_line]
+min_facts_right = 0.75
+max_errors_through = 0.05

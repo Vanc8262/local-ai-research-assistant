@@ -31,6 +31,20 @@ $env:GEMMA_GGUF = Find-One $Models "*gemma-4-E4B*q4_0*.gguf" "Gemma 4 E4B QAT"
 $env:QWEN_GGUF = Find-One $Models "*Qwen3.5-9B*Q4_K_M*.gguf" "Qwen3.5 9B Q4_K_M"
 $env:NOMIC_GGUF = Find-One $Models "*nomic-embed-text-v1.5*.gguf" "nomic-embed-text v1.5"
 
+# The bench referee is optional: set REFEREE_GGUF to its file before starting (it is passed through
+# to llama-swap as is); `assistant referee` checks it against the pin in evals\bench_v1.toml.
+# llama-swap fills in ${env.X} across the whole config and refuses to load it when any X is unset,
+# so without a referee the variable still needs a value: a path that does not exist. Only a request
+# for the referee then fails (llama-server cannot open it); the other models load as usual. It must
+# not be "": assigning an empty string deletes the variable in PowerShell.
+if (-not $env:REFEREE_GGUF) {
+    $env:REFEREE_GGUF = Join-Path $Models "no-referee-set.gguf"
+    Write-Host "Referee: not set (REFEREE_GGUF points at the placeholder $env:REFEREE_GGUF)"
+} else {
+    if (-not (Test-Path $env:REFEREE_GGUF)) { throw "REFEREE_GGUF does not exist: $env:REFEREE_GGUF" }
+    Write-Host "Referee: $env:REFEREE_GGUF"
+}
+
 $swap = (Get-Command llama-swap -ErrorAction SilentlyContinue).Source
 if (-not $swap) {
     $swap = Get-ChildItem -Path (Join-Path $env:LOCALAPPDATA "Microsoft\WinGet\Packages") -Recurse -File `

@@ -26,6 +26,10 @@ The support check is the local model's verdict plus a second opinion from the de
 (assistant/decide.py): a "supported" it doubts drops to "partial". Free RAM is sampled
 every 15 seconds into ram.csv. Results go to runs/eval-<id>/summary.csv and summary.md, and
 manifest.json records what the eval ran with (assistant/manifest.py).
+
+With `--bench`, the eval runs one candidate on one split of the frozen research bench
+(evals/bench_v1.toml) and is judged by the pinned referee and `scorecard` instead of this
+gate; see "Research bench" in the README.
 """
 from __future__ import annotations
 
@@ -36,6 +40,7 @@ import shutil
 import subprocess
 import time
 import tomllib
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -175,17 +180,34 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
              verify_tier: str | None = None, reload: bool = False, runner=None, transport=None,
              reloader=reload_model, runs: int = RUNS, ram_interval_s: float = 15.0,
              questions_path: str | Path | None = None, snapshot_dir: str | Path | None = None,
-             snapshot_mode: str = "record") -> tuple[Path, list[dict]]:
+             snapshot_mode: str = "record", candidate_tier: str | None = None, bench: dict | None = None,
+             eval_id: str | None = None,
+             offload_probe: Callable[[], tuple[int, int] | None] | None = None) -> tuple[Path, list[dict]]:
     """snapshot_dir: record the page searches of local and offline modes there, one folder per
     question and mode (snapshot_mode "record"), or answer them from an earlier recording
-    ("replay"; see assistant/snapshot.py)."""
-    out_dir = Path(settings.runs_dir) / f"eval-{new_run_id()}"
+    ("replay"; see assistant/snapshot.py).
+
+    candidate_tier: the research bench candidate (a local tier). It writes in the local, codex and
+    offline modes, and unless verify_tier names another tier it also checks, decides and repairs,
+    so the score is the candidate's whole pipeline. Hybrid still writes with Gemini (a reference
+    row) and checks with the candidate. bench is saved in manifest.json under "bench". eval_id
+    names the folder (eval-<id>), so a caller can record the attempt before the first question.
+
+    offload_probe: called once after the first question, while the candidate is still loaded, for
+    (layers on the GPU, layers in the model) or None when unknown; saved in manifest.json as
+    bench.offload for the fit check (assistant/fit.py). A probe that raises counts as unknown.
+    Only a bench eval (bench given) is probed."""
+    if candidate_tier is not None and settings.tier(candidate_tier).kind != "local":
+        raise ValueError(f"candidate tier {candidate_tier!r} is not local; bench candidates run on this PC")
+    verify_tier = verify_tier or candidate_tier
+    out_dir = Path(settings.runs_dir) / f"eval-{eval_id or new_run_id()}"
     out_dir.mkdir(parents=True, exist_ok=True)
-    write_manifest(out_dir, build_manifest(settings, modes=modes, runs=runs, question_ids=[q.id for q in questions],
-                                           questions_path=questions_path))
+    manifest = build_manifest(settings, modes=modes, runs=runs, question_ids=[q.id for q in questions],
+                              questions_path=questions_path, bench=bench)
+    write_manifest(out_dir, manifest)
     rows = []
     with Timeline(out_dir / "ram.csv", interval_s=ram_interval_s) as ram:
-        for question in questions:
+        for number, question in enumerate(questions):
             for run in range(1, runs + 1):
                 if reload:
                     reloader(settings, verify_tier)
@@ -200,17 +222,31 @@ def run_eval(settings: Settings, questions: list[Question], modes: list[str], *,
                     if snapshot_dir and MODES[mode][1] in ("searxng", "offline"):
                         snapshot = SearchSnapshot(Path(snapshot_dir) / f"{question.id}-{mode}", snapshot_mode)
                     row = _one(settings, question, mode, verify_tier, runner, transport,
-                               (lambda: reloader(settings, verify_tier)) if reload else None, ram, snapshot)
+                               (lambda: reloader(settings, verify_tier)) if reload else None, ram, snapshot,
+                               writer_tier=candidate_tier)
                     ram.sample()
                     rows.append({**row, "run": run, "min_free_ram_mb": ram.low})
                     write_summary(out_dir, rows, ram.lowest)   # after every run, so a long eval can be read as it goes
+            if number == 0 and offload_probe is not None and bench is not None:
+                _save_offload(out_dir, manifest, offload_probe)
     write_summary(out_dir, rows, ram.lowest)
     return out_dir, rows
 
 
+def _save_offload(out_dir: Path, manifest: dict, probe) -> None:
+    try:
+        found = probe()
+    except Exception:   # noqa: BLE001 - the GPU check is then unknown; the eval goes on
+        found = None
+    # a copy, so the caller's bench dict stays as it gave it
+    manifest["bench"] = {**manifest["bench"], "offload": list(found) if found else None}
+    write_manifest(out_dir, manifest)
+
+
 def _one(settings, question: Question, mode: str, verify_tier, runner, transport, reload, ram,
-         snapshot: SearchSnapshot | None = None) -> dict:
+         snapshot: SearchSnapshot | None = None, writer_tier: str | None = None) -> dict:
     tier, search, public = MODES[mode]
+    tier = tier or writer_tier   # a mode with no tier of its own writes with the candidate, else the default
     log = RunLog(settings.runs_dir, task=f"eval {question.id} ({mode}): {question.text}")
     row = {"question": question.id, "mode": mode, "run_id": log.run_id}
     label, started = ram.label, time.perf_counter()

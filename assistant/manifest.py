@@ -22,8 +22,9 @@ from pathlib import Path
 from .config import Settings
 from .sources import CACHE_VERSION
 
-GGUF_ENVS = ("GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF")
+GGUF_ENVS = ("GEMMA_GGUF", "QWEN_GGUF", "NOMIC_GGUF", "REFEREE_GGUF")
 CHUNK = 1 << 20
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 def sha256_file(path: Path) -> str:
@@ -37,7 +38,7 @@ def sha256_file(path: Path) -> str:
 def _git(*args: str) -> str:
     try:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True,
-                              cwd=Path(__file__).resolve().parent.parent).stdout.strip()
+                              cwd=REPO_ROOT).stdout.strip()
     except (OSError, subprocess.CalledProcessError):
         return ""
 
@@ -60,7 +61,10 @@ def gguf_files(env=os.environ, hash_files: bool = True) -> dict:
 
 
 def build_manifest(settings: Settings, *, modes: list[str], runs: int, question_ids: list[str],
-                   questions_path: str | Path | None = None, env=os.environ, hash_files: bool = True) -> dict:
+                   questions_path: str | Path | None = None, env=os.environ, hash_files: bool = True,
+                   bench: dict | None = None) -> dict:
+    """bench: the research bench stamp of a candidate run (version, split, candidate, candidate_key,
+    candidate_gguf_sha256), saved under "bench" so a score names the bench and candidate it is for."""
     tiers = {}
     for name, tier in settings.tiers.items():
         tiers[name] = {key: value for key, value in asdict(tier).items() if key != "extra_body"}
@@ -84,6 +88,8 @@ def build_manifest(settings: Settings, *, modes: list[str], runs: int, question_
     }
     if questions_path and Path(questions_path).is_file():
         manifest["questions_file"] = {"path": str(questions_path), "sha256": sha256_file(Path(questions_path))}
+    if bench is not None:
+        manifest["bench"] = bench
     return manifest
 
 

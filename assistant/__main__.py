@@ -16,7 +16,17 @@
     python -m assistant repair <run_id>                     fix or remove the claims that failed the check
     python -m assistant eval [--mode local --mode hybrid]   the Stage 2 eval: research + verify per question
                              [--no-tavily] [--mode offline]   fully local: no keyed search; Kiwix copies only
+    python -m assistant eval --bench evals/bench_v1.toml --candidate gemma-e4b --split dev|test
+                                                            a research bench run of one candidate; the test
+                                                            split is capped and logged in results/bench_ledger.csv
     python -m assistant rescore runs/eval-<id>               score a finished eval again from its saved reports
+    python -m assistant referee runs/eval-<id> --bench evals/bench_v1.toml
+                                                            judge an eval's reports with the pinned referee
+    python -m assistant referee calibrate sample|spot|agree|run ...
+                                                            the referee's calibration set: sample, spot-check, compare, score
+    python -m assistant scorecard runs/eval-<a> runs/eval-<b> --bench evals/bench_v1.toml [--out FILE]
+                                                            fit, refereed quality and rank of bench evals; on
+                                                            the test split, marks each attempt passed or missed
     python -m assistant claims sample runs/eval-<id> ...    sample checker verdicts to label by hand
     python -m assistant claims score results/claim_sample.csv   false-pass and false-removal rates from the labels
     python -m assistant decide probe [-t local]             which decision method works on a local tier
@@ -32,8 +42,11 @@ Without --public a prompt counts as private and is refused by cloud tiers.
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
 import sys
-from pathlib import Path
+from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
 
 import httpx
 
@@ -41,14 +54,21 @@ from .codex import CatalogError, build_index, fetch, load_catalog, read_manifest
 from .config import load_settings
 from .decide import METHODS, Decider, noul
 from . import decide_check
-from . import claim_sample
-from .evaluate import MODES, load_questions, reload_model, rescore, run_eval
+from . import calibration, claim_sample, scorecard
+from .evaluate import MODES, RUNS, load_questions, reload_model, rescore, run_eval
+from .fit import fetch_llama_swap_log, parse_offload
 from .gateway import Gateway, PrivacyError, TierNotReady
 from .proxy import Proxy, make_server
 from .research import SEARCH_TOOLS, run_research
-from .runlog import RunLog, read_run
+from .runlog import RunLog, new_run_id, read_run
 from .search import SearchError, search
 from .repair import RepairError, repair_run
+from .bench_spec import (REFEREE_CAVEAT, BenchSpecError, candidate_key, check_referee_pin, check_served_model,
+                         load_bench, served_model_path)
+from .ledger import (DEFAULT_LEDGER, AttemptFinal, RetestLimit, check_attempt, finish_attempt, finish_attempts,
+                     read_ledger, record_attempt)
+from .manifest import REPO_ROOT, _git, sha256_file
+from .referee import PROMPT_HASH, PROMPT_VERSION, check_prompt, score_eval
 from .verify import CAVEAT, failures, verify_run
 from . import vault
 
@@ -296,26 +316,422 @@ def _exit_code(summary: dict) -> int:
 
 
 def cmd_eval(settings, args) -> int:
+    if args.bench:
+        try:
+            plan = _bench_plan(settings, args)
+        except (BenchRefused, BenchSpecError, RetestLimit) as exc:
+            print(f"Eval refused: {exc}")
+            return 2
+        return _bench_eval(settings, args, plan)
+    if args.candidate or args.split:
+        print("Eval refused: --candidate and --split need --bench (e.g. --bench evals/bench_v1.toml)")
+        return 2
     if args.no_tavily:   # the fully local gate: no keyed search service at all
         settings.research.tavily_fallback = False
-    questions = load_questions(args.questions)
+    questions_path = args.questions or "evals/research_questions.toml"
+    questions = load_questions(questions_path)
     if args.only:
         questions = [q for q in questions if q.id in args.only]
     # offline mode runs by default only once Kiwix copies are configured
     modes = args.mode or [m for m in MODES if m != "offline" or settings.search.kiwix_books]
     out_dir, rows = run_eval(settings, questions, modes, verify_tier=args.verify_tier,
-                              reload=not args.no_reload, runs=args.runs, questions_path=args.questions,
-                              snapshot_dir=args.record_search or args.replay_search,
-                              snapshot_mode="replay" if args.replay_search else "record")
+                              reload=not args.no_reload, runs=RUNS if args.runs is None else args.runs,
+                              questions_path=questions_path, **_snapshot_options(args))
+    return _eval_result(out_dir, rows)
+
+
+class BenchRefused(Exception):
+    """A bench run that must not start; the message says why."""
+
+
+BENCH_MODES = ("local", "hybrid")   # the candidate, and Gemini as a reference row
+
+
+def _snapshot_options(args) -> dict:
+    return {"snapshot_dir": args.record_search or args.replay_search,
+            "snapshot_mode": "replay" if args.replay_search else "record"}
+
+
+def _eval_result(out_dir: Path, rows: list[dict]) -> int:
     print((out_dir / "summary.md").read_text(encoding="utf-8"))
     print(f"Saved: {out_dir / 'summary.csv'}")
     return 0 if rows and all(r.get("gate") == "pass" for r in rows) else 1
+
+
+def _dirty_paths(porcelain: str) -> list[str]:
+    """The repo-relative paths in `git status --porcelain` output ("XY path", or "XY old -> new"
+    for a rename). _git strips its output, so the first line may have lost its leading space."""
+    paths = []
+    for line in porcelain.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) == 2:
+            paths.append(parts[1].split(" -> ")[-1].strip('"'))
+    return paths
+
+
+def _repo_path(path: Path) -> str | None:
+    """`path` relative to the repo root, as git names it, or None when it is outside the repo."""
+    try:
+        return Path(path).resolve().relative_to(Path(REPO_ROOT).resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _check_ledger_committed(ledger: Path, ledger_rel: str | None) -> None:
+    """The test split counts attempts in one ledger per repo, results/bench_ledger.csv, as committed:
+    tracked, in HEAD, and with every committed row still there (new rows may follow). Otherwise a
+    second ledger, an uncommitted one, or a locally truncated one would reset the retest cap."""
+    if ledger_rel is None or PurePosixPath(ledger_rel) != PurePosixPath(DEFAULT_LEDGER):
+        raise BenchRefused(f"the test split records attempts only in this repo's {DEFAULT_LEDGER}, not {ledger}")
+    if not _git("ls-files", "--error-unmatch", ledger_rel) or not _git("rev-parse", "--verify", "--quiet",
+                                                                        f"HEAD:{ledger_rel}"):
+        raise BenchRefused(f"{ledger_rel} is not committed (git-tracked and in HEAD); commit it first")
+    committed = _git("show", f"HEAD:{ledger_rel}").replace("\r\n", "\n")   # _git strips the final newline
+    current = ledger.read_text(encoding="utf-8").replace("\r\n", "\n") if ledger.is_file() else ""
+    if committed and not (current.rstrip("\n") == committed or current.startswith(committed + "\n")):
+        raise BenchRefused(f"{ledger_rel} no longer starts with its committed rows; restore them "
+                           f"(git checkout HEAD -- {ledger_rel}) and add new attempts only after them")
+
+
+def _bench_plan(settings, args) -> dict:
+    """Everything a bench run needs, or BenchRefused. The spec sets the questions, runs and Tavily
+    setting, so a frozen bench can't be overridden by a flag. The test split also needs a frozen,
+    committed spec whose referee prompt is this code's, the committed ledger, a clean tree at a commit
+    (the candidate key names it), the candidate's GGUF, the pinned referee, and room under the retest
+    cap; last, llama-swap must serve the candidate GGUF that was hashed (on dev a mismatch, or no
+    answer, is only a warning). Cheap checks run first."""
+    for flag, value in (("--questions", args.questions), ("--runs", args.runs)):
+        if value is not None:
+            raise BenchRefused(f"{flag} comes from the bench spec; leave it out with --bench")
+    if not args.candidate:
+        raise BenchRefused("--bench needs --candidate <name>, one of the spec's [candidates]")
+    spec = load_bench(args.bench)
+    ref = spec.candidates.get(args.candidate)
+    if ref is None:
+        raise BenchRefused(f"unknown candidate {args.candidate!r}; {args.bench} has: {', '.join(spec.candidates)}")
+    tier = settings.tiers.get(ref.tier)
+    if tier is None or tier.kind != "local":
+        raise BenchRefused(f"candidate {args.candidate!r} runs on tier {ref.tier!r}, which is not a local tier in "
+                           f"{args.config}")
+    other = [m for m in args.mode or [] if m not in BENCH_MODES]
+    if other:
+        raise BenchRefused(f"with --bench only local mode runs, plus hybrid as a reference row; not {', '.join(other)}")
+    if spec.search != MODES["local"][1]:
+        raise BenchRefused(f"the spec's search {spec.search!r} is not the local mode's {MODES['local'][1]!r}")
+    split = args.split or "dev"
+    test = split == "test"
+    if test:
+        changed = [flag for flag, value in (("--only", args.only), ("--verify-tier", args.verify_tier),
+                                            ("--no-tavily", args.no_tavily), ("--replay-search", args.replay_search))
+                   if value]
+        if changed:
+            raise BenchRefused("the test split runs the whole spec as written, with the candidate as checker: "
+                               f"leave out {', '.join(changed)}")
+    if test and not spec.frozen:
+        raise BenchRefused(f"the test split needs a frozen bench spec (frozen = true in {args.bench}); "
+                           "use --split dev until then")
+    if test:   # the referee will judge this attempt with the spec's prompt, so it must be this code's
+        check_prompt(spec)
+    files = spec.questions.get(split) or []
+    missing = [f for f in files if not Path(f).is_file()]
+    if not files or missing:
+        raise BenchRefused(f"{split} question files missing: {', '.join(missing) or 'none listed in the spec'}")
+    questions = [q for f in files for q in load_questions(f)]
+    if args.only:
+        questions = [q for q in questions if q.id in args.only]
+    ledger, spec_path = Path(args.ledger), Path(args.bench)
+    ledger_rel, spec_rel = _repo_path(ledger), _repo_path(spec_path)
+    commit = _git("rev-parse", "HEAD")
+    # the ledger is the one file a test run is expected to leave changed; it doesn't touch the pipeline
+    dirty = [p for p in _dirty_paths(_git("status", "--porcelain", "--untracked-files=no"))
+             if (Path(REPO_ROOT) / p).resolve() != ledger.resolve()]
+    if test:
+        if not commit:
+            raise BenchRefused("the test split needs a git commit to name in the candidate key")
+        _check_ledger_committed(ledger, ledger_rel)
+        if spec_rel is None or not _git("ls-files", "--error-unmatch", spec_rel):
+            raise BenchRefused(f"the test split needs the committed bench spec; {spec_path} is not git-tracked "
+                               "in this repo")
+        if spec_rel in dirty:
+            raise BenchRefused(f"the bench spec {spec_rel} has uncommitted changes; a frozen spec changes only "
+                               "as a new bench version, committed")
+        if dirty:
+            raise BenchRefused("the git tree has uncommitted changes (" + ", ".join(dirty[:5]) +
+                               "); commit them first: the candidate key names the commit")
+    gguf = os.environ.get(ref.gguf_env, "")
+    if test and not gguf:
+        raise BenchRefused(f"candidate GGUF: environment variable {ref.gguf_env} is not set")
+    if test and not Path(gguf).is_file():
+        raise BenchRefused(f"candidate GGUF: file from {ref.gguf_env} does not exist: {gguf}")
+    if test:
+        check_referee_pin(spec, os.environ)
+    gguf_sha = sha256_file(Path(gguf)) if gguf and Path(gguf).is_file() else ""
+    key = candidate_key(gguf_sha, commit, tier)
+    if test:
+        check_attempt(ledger, spec.version, gguf_sha, key)
+    # the hash above is of the file the shell names; llama-swap must serve that file (test: or refuse)
+    warning = check_served_model(tier, gguf, f"candidate GGUF ({ref.gguf_env})", strict=test,
+                                 fetch=served_model_path)
+    if warning:
+        print(warning)
+    modes = ["local"] + (["hybrid"] if "hybrid" in (args.mode or []) else [])
+    named = lambda path: _repo_path(Path(path)) or Path(path).as_posix()
+    bench = {"version": spec.version, "split": split, "candidate": args.candidate, "candidate_key": key,
+             "candidate_gguf_sha256": gguf_sha, "tree_clean": bool(commit) and not dirty,
+             "question_files": {named(f): sha256_file(Path(f)) for f in files},
+             "spec": {"path": named(spec_path), "sha256": sha256_file(spec_path)},
+             "referee_prompt_version": PROMPT_VERSION, "referee_prompt_hash": PROMPT_HASH,
+             "ledger": ledger_rel if test else None}
+    return {"spec": spec, "tier": ref.tier, "questions": questions, "modes": modes, "test": test,
+            "commit": commit, "bench": bench}
+
+
+def _command(args) -> str:
+    """The command line that ran this, to repeat after fixing something."""
+    return subprocess.list2cmdline(["python", "-m", "assistant", *getattr(args, "argv", [])])
+
+
+def _ledger_locked(exc: OSError, command: str) -> None:
+    print(f"Could not write {DEFAULT_LEDGER}: {exc}")
+    print(f"Close {DEFAULT_LEDGER} (e.g. in Excel) and run: {command}")
+
+
+def _mark_error_command(eval_id: str) -> str:
+    return (f'python -c "from assistant.ledger import finish_attempt; '
+            f"finish_attempt('{DEFAULT_LEDGER}', '{eval_id}', 'error')\"")
+
+
+def _bench_eval(settings, args, plan: dict) -> int:
+    """Run the candidate. On the test split the attempt goes in the ledger before the first
+    question, and is marked "error" if the eval raises or any of the candidate's own (local) runs
+    has no checked report; a failed hybrid reference row doesn't count. The scorecard decides passed
+    or missed later. A ledger that can't be written (open in Excel) is reported with the command to
+    run once it is closed; it never hides an exception from the eval itself."""
+    spec, bench, ledger = plan["spec"], plan["bench"], Path(args.ledger)
+    settings.research.tavily_fallback = spec.tavily_fallback and not args.no_tavily
+    eval_id = new_run_id()
+    attempt = f"eval-{eval_id}"
+    if plan["test"]:
+        try:
+            record_attempt(ledger, {"bench_version": spec.version, "candidate": bench["candidate"],
+                                    "candidate_key": bench["candidate_key"],
+                                    "gguf_sha256": bench["candidate_gguf_sha256"], "git_commit": plan["commit"],
+                                    "split": "test", "eval_id": attempt,
+                                    "started_utc": datetime.now(timezone.utc).isoformat(timespec="seconds")})
+        except OSError as exc:   # nothing has run yet: the same command starts the attempt
+            _ledger_locked(exc, _command(args))
+            return 1
+    try:
+        base_url = settings.tier(plan["tier"]).base_url
+        out_dir, rows = run_eval(settings, plan["questions"], plan["modes"], verify_tier=args.verify_tier,
+                                 reload=not args.no_reload, runs=spec.runs, candidate_tier=plan["tier"],
+                                 bench=bench, eval_id=eval_id, **_snapshot_options(args),
+                                 offload_probe=lambda: parse_offload(fetch_llama_swap_log(base_url)))
+    except BaseException:   # a crash or Ctrl-C still used up the attempt
+        if plan["test"]:
+            try:
+                finish_attempt(ledger, attempt, "error")
+            except OSError as exc:   # report it, then re-raise the eval's own exception
+                _ledger_locked(exc, _mark_error_command(attempt))
+        raise
+    own = [r for r in rows if (r.get("mode") or "local") == "local"]
+    if plan["test"] and (not own or any(r.get("outcome") != "ok" for r in own)):
+        try:
+            finish_attempt(ledger, attempt, "error")
+        except OSError as exc:
+            _eval_result(out_dir, rows)
+            _ledger_locked(exc, _mark_error_command(attempt))
+            return 1
+    code = _eval_result(out_dir, rows)
+    if plan["test"]:
+        print(f"Test attempt {attempt} is in {ledger}; commit that file.")
+    return code
 
 
 def cmd_rescore(settings, args) -> int:
     rows = rescore(Path(args.eval_dir), load_questions(args.questions), settings.runs_dir)
     print((Path(args.eval_dir) / "rescore.md").read_text(encoding="utf-8"))
     return 0 if rows else 1
+
+
+def _one_line(exc: BaseException) -> str:
+    return "; ".join(line.strip() for line in str(exc).splitlines() if line.strip()) or type(exc).__name__
+
+
+def cmd_referee(settings, args) -> int:
+    """Judge the finished eval's reports with the pinned referee (README: research bench). A test-split
+    eval is judged only once its attempt is in the committed ledger at HEAD. Every refusal is one
+    line and exit code 1."""
+    if args.words[0] == "calibrate":
+        return cmd_calibrate(settings, args)
+    eval_dir = Path(args.words[0])
+    if not (eval_dir / "summary.csv").is_file():
+        print(f"Referee refused: {eval_dir} is not a finished eval folder (no summary.csv)")
+        return 1
+    log = RunLog(settings.runs_dir, task=f"referee {eval_dir.name}")
+    gateway = Gateway(settings, log)
+    try:
+        rows = score_eval(eval_dir, load_bench(args.bench), settings, gateway,
+                          committed_ledger=_git("show", f"HEAD:{DEFAULT_LEDGER}") or None)
+    except (BenchSpecError, TierNotReady, PrivacyError, KeyError, OSError, ValueError, httpx.HTTPError) as exc:
+        print(f"Referee refused: {_one_line(exc)}")
+        return 1
+    finally:
+        gateway.close()
+    print((eval_dir / "referee.md").read_text(encoding="utf-8"))
+    print(f"Saved: {eval_dir / 'referee.csv'}")
+    incomplete = [r for r in rows if not r.get("complete")]
+    if incomplete:
+        print(f"{len(incomplete)} of {len(rows)} runs are incomplete: some judgements failed on a transient "
+              "error (connection, timeout, server busy); run the same command again to judge them.")
+    failed = sum(int(r.get("referee_failed") or 0) for r in rows)
+    if failed:
+        total = sum(int(r.get("statements") or 0) for r in rows)
+        print(f"The referee could not judge {failed} of {total} statements (counted as unclear); the "
+              "scorecard shows the share and refuses a card above [referee] max_referee_failed.")
+    return 0 if rows and not incomplete else 1
+
+
+def _scored(card) -> str:
+    return "passed" if card.passes else "missed"
+
+
+def cmd_scorecard(settings, args) -> int:
+    """Fit, refereed quality and rank of bench evals (assistant/scorecard.py). Exit 1 when refused.
+    On the test split, every eval's attempt must already be in the committed ledger at HEAD and in
+    the working ledger; only then is anything written. Each attempt is marked passed or missed in
+    results/bench_ledger.csv (one already marked "error" stays so), which is to be committed next.
+    A final status never changes: an attempt already passed or missed that now scores the other way
+    is refused before anything is written.
+    The default output and the calibration report live in the repo's results/, whatever the cwd."""
+    spec_path = Path(args.bench)
+    try:
+        spec = load_bench(spec_path)
+        cards, reference = scorecard.build_cards([Path(d) for d in args.eval_dirs], spec,
+                                                 committed_ledger=_git("show", f"HEAD:{DEFAULT_LEDGER}") or None,
+                                                 spec_sha256=sha256_file(spec_path))
+        ranked = scorecard.rank(cards, spec.pass_line)
+    except (scorecard.ScorecardRefused, BenchSpecError, OSError, ValueError) as exc:
+        print(f"Scorecard refused: {exc}")
+        return 1
+    test = bool(ranked) and ranked[0].split == "test"
+    ledger = Path(REPO_ROOT) / DEFAULT_LEDGER
+    if test:   # check every attempt before writing any, so a refusal leaves the ledger as it was
+        status = {r.get("eval_id"): r.get("status", "") for r in read_ledger(ledger)}
+        lost = [c.eval_id for c in ranked if c.eval_id not in status]
+        if lost:
+            print(f"Scorecard refused: {', '.join(lost)} not in the working {DEFAULT_LEDGER}, though HEAD has "
+                  f"them; restore it (git checkout HEAD -- {DEFAULT_LEDGER}) and run again")
+            return 1
+        for card in ranked:
+            card.ledger_status = status[card.eval_id]
+        changed = [f"{c.eval_id} is already {c.ledger_status}, not {_scored(c)}" for c in ranked
+                   if c.ledger_status in ("passed", "missed") and c.ledger_status != _scored(c)]
+        if changed:   # a final status never changes (assistant/ledger.py)
+            print(f"Scorecard refused: {'; '.join(changed)} in {DEFAULT_LEDGER}; a final status is not changed")
+            return 1
+    results = Path(REPO_ROOT) / "results"
+    calibration_file = results / f"calibration_v{spec.version}_{spec.referee.tier}.md"
+    calibration_md = calibration_file.read_text(encoding="utf-8") if calibration_file.is_file() else None
+    # the test split's scorecard is the bench's result; a dev one is named so it can't pass for it
+    name = f"bench_v{spec.version}_scorecard.md" if test else f"bench_v{spec.version}_{(ranked[0].split if ranked else '') or 'dev'}_scorecard.md"
+    out = Path(args.out) if args.out else results / name
+    scorecard.write_scorecard(out, ranked, spec, calibration_md=calibration_md, reference=reference)
+    print(out.read_text(encoding="utf-8"))
+    print(f"Saved: {out} and {out.with_suffix('.csv')}")
+    if test:
+        try:   # one write for every attempt; an attempt marked "error" keeps it
+            finish_attempts(ledger, {c.eval_id: _scored(c) for c in ranked if c.ledger_status != "error"})
+        except AttemptFinal as exc:   # changed since the check above
+            print(f"Scorecard refused: {exc}")
+            return 1
+        except OSError as exc:
+            _ledger_locked(exc, _command(args))
+            return 1
+        kept = sum(c.ledger_status == "error" for c in ranked)
+        print(f"Marked {len(ranked) - kept} test attempts passed or missed in {DEFAULT_LEDGER}"
+              + (f" ({kept} already marked error, kept as error)" if kept else "") + "; commit that file.")
+    return 0
+
+
+def _calibration_report(path: Path, tier: str, spec, result: dict, passed: bool, sha: str = "") -> None:
+    """results/calibration_v<version>_<tier>.md: both recalls with intervals, the verdict, and what pins them."""
+    lines = [f"# Referee calibration: {tier}", "", f"**{'PASS' if passed else 'FAIL'}**", ""]
+    for label, minimum in (("supported", spec.referee.min_supported_recall),
+                           ("not_supported", spec.referee.min_not_supported_recall)):
+        hits, total, interval = result[label]
+        rate = f"{hits / total:.3f}" if total else "n/a"
+        ci = f"; 95% interval {interval[0]:.3f} to {interval[1]:.3f}" if interval else ""
+        lines.append(f"- {label} recall: {hits} of {total} = {rate}{ci}; minimum {minimum} "
+                     f"({'pass' if total and hits / total >= minimum else 'fail'})")
+    lines += [f"- labelled unclear (excluded): {result['unclear_labels']}",
+              f"- judgements that failed (gateway or reply errors, counted as misses): {result.get('referee_errors', 0)}",
+              f"- prompt version: {PROMPT_VERSION}", f"- prompt hash: {PROMPT_HASH}"]
+    if sha:
+        lines.append(f"- referee GGUF sha256: {sha}")
+    lines += ["", REFEREE_CAVEAT]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def cmd_calibrate(settings, args) -> int:
+    """referee calibrate sample|spot|agree|run (README: research bench). The default files are in the
+    repo's results/, named after the bench version: calibration_v<version>.csv, ..._spot.csv, and the
+    report calibration_v<version>_<tier>.md that the scorecard reads. `run` first checks the prompt,
+    the referee pin and that llama-swap serves the pinned file."""
+    action, rest = (args.words[1] if len(args.words) > 1 else ""), args.words[2:]
+    if action not in ("sample", "spot", "agree", "run") or not rest:
+        print("Usage: referee calibrate sample <eval dirs> | spot <csv> | agree <claude csv> <van csv> | run <csv>")
+        return 2
+    results = Path(REPO_ROOT) / "results"
+    try:
+        if action == "agree":
+            if len(rest) != 2:
+                print("Name two CSVs: Claude's labels, then Van's")
+                return 2
+            agreeing, compared = calibration.agreement(Path(rest[0]), Path(rest[1]))
+            print(f"Van disagrees on {compared - agreeing} of {compared}")
+            return 1 if compared - agreeing > 3 else 0
+        spec = load_bench(args.bench)
+        if action == "sample":
+            dev_ids = set()
+            for path in spec.questions.get("dev", []):
+                path = Path(path) if Path(path).is_absolute() or Path(path).is_file() else Path(REPO_ROOT) / path
+                dev_ids |= {q.id for q in load_questions(path)}
+            out = Path(args.out) if args.out else results / f"calibration_v{spec.version}.csv"
+            rows = calibration.sample_pairs([Path(p) for p in rest], out, dev_ids, runs_dir=settings.runs_dir)
+            print(f"Sampled {len(rows)} pairs into {out}. Fill `label` (supported, not_supported, unclear) and `labeller`.")
+            return 0 if rows else 1
+        if action == "spot":
+            out = Path(args.out) if args.out else results / f"calibration_v{spec.version}_spot.csv"
+            rows = calibration.spot_check(Path(rest[0]), out)
+            print(f"Wrote {len(rows)} pairs with labels blanked to {out}, for Van to label.")
+            return 0 if rows else 1
+        tier = args.tier or spec.referee.tier
+        check_prompt(spec)
+        check_referee_pin(spec, os.environ)
+        env_gguf = os.environ.get(spec.referee.gguf_env, "")
+        sha = sha256_file(Path(env_gguf)) if env_gguf else ""   # before any judging, so a bad path costs nothing
+        check_served_model(settings.tier(tier), env_gguf, "referee GGUF", strict=True, fetch=served_model_path)
+        log = RunLog(settings.runs_dir, task=f"referee calibrate {tier}")
+        gateway = Gateway(settings, log)
+        try:
+            rows = calibration.judge_pairs(Path(rest[0]), settings.runs_dir, gateway, tier)
+        finally:
+            gateway.close()
+    except (BenchSpecError, TierNotReady, PrivacyError, KeyError, ValueError, OSError, httpx.HTTPError) as exc:
+        print(f"Calibration refused: {_one_line(exc)}")
+        return 1
+    result = calibration.recall(rows)
+    passed = calibration.meets(result, spec)
+    report = results / f"calibration_v{spec.version}_{tier}.md"
+    _calibration_report(report, tier, spec, result, passed, sha)
+    for label in ("supported", "not_supported"):
+        hits, total, interval = result[label]
+        print(f"{label} recall: {hits} of {total}" + (f" (95% interval {interval[0]:.2f} to {interval[1]:.2f})" if interval else ""))
+    print("PASS" if passed else "FAIL", f"against the spec minimums. Saved: {report}")
+    print(REFEREE_CAVEAT)
+    return 0 if passed else 1
 
 
 def cmd_claims(settings, args) -> int:
@@ -495,21 +911,39 @@ def main(argv: list[str] | None = None) -> int:
     mend.add_argument("--reload-every", type=int, default=0, metavar="N",
                       help="reload the local model in LM Studio every N model calls (long reports)")
     evaluate = sub.add_parser("eval", help="run the research eval: each question researched, verified and repaired")
-    evaluate.add_argument("--questions", default="evals/research_questions.toml")
+    evaluate.add_argument("--questions", default=None, help="default: evals/research_questions.toml")
     evaluate.add_argument("--mode", action="append", choices=list(MODES), help="repeat; default: all modes")
     evaluate.add_argument("--only", nargs="+", metavar="ID", help="just these question ids")
     evaluate.add_argument("--verify-tier", default=None, help="local tier for the citation check")
-    evaluate.add_argument("--runs", type=int, default=2, help="runs per question and mode (default 2)")
+    evaluate.add_argument("--runs", type=int, default=None, help="runs per question and mode (default 2)")
     evaluate.add_argument("--no-tavily", action="store_true",
                           help="never fall back to Tavily, even for these public questions")
     evaluate.add_argument("--no-reload", action="store_true",
                           help="keep the loaded model instead of reloading it before each question")
+    evaluate.add_argument("--bench", default=None, metavar="SPEC",
+                          help="run a research bench candidate; questions, runs and Tavily come from the spec")
+    evaluate.add_argument("--candidate", default=None, help="with --bench: a name from the spec's [candidates]")
+    evaluate.add_argument("--split", choices=("dev", "test"), default=None,
+                          help="with --bench: dev (default; free, not logged) or test (frozen spec, capped, logged)")
+    evaluate.add_argument("--ledger", default=DEFAULT_LEDGER,
+                          help="with --bench: the committed record of test-split attempts")
     again = sub.add_parser("rescore", help="score a finished eval again from its saved reports (no model calls)")
     again.add_argument("eval_dir", help="the eval's folder, e.g. runs/eval-20261114-...")
     again.add_argument("--questions", default="evals/research_questions.toml")
+    ref = sub.add_parser("referee", help="judge a finished eval's reports with the pinned bench referee")
+    ref.add_argument("words", nargs="+", help="an eval folder, e.g. runs/eval-20261115-..., or: calibrate "
+                     "sample|spot|agree|run ...")
+    ref.add_argument("--bench", default="evals/bench_v1.toml")
+    ref.add_argument("--out", help="calibrate sample|spot: the CSV to write")
+    ref.add_argument("--tier", help="calibrate run: the tier to judge with (default: the spec's referee tier)")
     snap = evaluate.add_mutually_exclusive_group()
     snap.add_argument("--record-search", metavar="DIR", help="save the page searches of local and offline modes")
     snap.add_argument("--replay-search", metavar="DIR", help="answer the page searches from a recording, offline")
+    card = sub.add_parser("scorecard", help="fit, refereed quality and rank of research bench evals")
+    card.add_argument("eval_dirs", nargs="+", help="bench eval folders, e.g. runs/eval-20261115-...")
+    card.add_argument("--bench", default="evals/bench_v1.toml")
+    card.add_argument("--out", default=None, help="default: results/bench_v<version>_scorecard.md (and .csv) for the "
+                      "test split, results/bench_v<version>_dev_scorecard.md for dev")
     claims = sub.add_parser("claims", help="sample the checker's verdicts for labelling, or score the labels")
     claims.add_argument("action", choices=["sample", "score"])
     claims.add_argument("paths", nargs="*", help="sample: eval folders; score: the labelled CSV")
@@ -531,6 +965,7 @@ def main(argv: list[str] | None = None) -> int:
     store.add_argument("--picks", default="vault.toml", help="the models chosen for the vault")
     store.add_argument("--only", nargs="+", metavar="NAME", help="sync: just these picks")
     args = parser.parse_args(argv)
+    args.argv = list(sys.argv[1:] if argv is None else argv)
     if args.command == "vault" and args.action == "sync":
         args.names = args.only or []
 
@@ -538,7 +973,7 @@ def main(argv: list[str] | None = None) -> int:
     handler = {"tiers": cmd_tiers, "ask": cmd_ask, "search": cmd_search, "show": cmd_show,
                "proxy": cmd_proxy, "codex": cmd_codex,
                "research": cmd_research, "verify": cmd_verify, "repair": cmd_repair,
-               "eval": cmd_eval, "rescore": cmd_rescore, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
+               "eval": cmd_eval, "rescore": cmd_rescore, "referee": cmd_referee, "scorecard": cmd_scorecard, "claims": cmd_claims, "decide": cmd_decide, "vault": cmd_vault}[args.command]
     return handler(settings, args)
 
 

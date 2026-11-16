@@ -150,3 +150,10 @@ def test_sampling_matches_between_assistant_and_bench_configs():
     for tier in shared:
         model = bench[tier.model]
         assert (tier.temperature, tier.extra_body) == (model.temperature, model.extra_body), tier.name
+
+
+def test_referee_tier_is_local_loopback():
+    settings = load_settings(Path(__file__).resolve().parent.parent / "assistant.toml")
+    tier = settings.tier("referee")
+    assert tier.kind == "local" and tier.base_url.startswith("http://127.0.0.1")
+    assert (tier.temperature, tier.max_tokens, tier.extra_body) == (0.0, 4000, {"seed": 20261115})
